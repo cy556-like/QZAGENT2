@@ -1300,59 +1300,93 @@ def load_document(file_path: str) -> list:
     elif ext == ".docx":
         return _load_docx_with_tables(file_path)
     elif ext == ".doc":
-        # .doc 格式：先转成 .docx 再用 _load_docx_with_tables 读取
+        # .doc 格式：纯 Python 提取文本（用 olefile 读取 OLE 结构）
+        try:
+            import olefile
+            from langchain_core.documents import Document
+            
+            ole = olefile.OleFileIO(file_path)
+            # 从 WordDocument 流中提取文本
+            if ole.exists('WordDocument'):
+                stream = ole.openstream('WordDocument')
+                data = stream.read()
+                # 尝试从二进制数据中提取 Unicode 文本
+                text_parts = []
+                # 方法1：提取所有 Unicode 字符串
+                try:
+                    decoded = data.decode('utf-16-le', errors='ignore')
+                    # 过滤出可打印字符
+                    import re
+                    chunks = re.findall(r'[\u4e00-\u9fff\u0020-\u007e\u3000-\u303f\uff00-\uffef]+', decoded)
+                    text_parts = chunks
+                except Exception:
+                    pass
+                
+                ole.close()
+                
+                if text_parts:
+                    full_text = '\n'.join(text_parts)
+                    if len(full_text) > 50:  # 至少有一些有效内容
+                        return [Document(page_content=full_text, metadata={"source": file_path})]
+            
+            ole.close()
+        except Exception as e:
+            logger.warning(f"olefile 读取 .doc 失败: {e}")
+        
+        # 方法2：直接从文件二进制中提取文本
+        try:
+            from langchain_core.documents import Document
+            import re
+            
+            with open(file_path, 'rb') as f:
+                raw = f.read()
+            
+            # 尝试 UTF-16LE 解码
+            decoded = raw.decode('utf-16-le', errors='ignore')
+            chunks = re.findall(r'[\u4e00-\u9fff\u0020-\u007e\u3000-\u303f\uff00-\uffef]+', decoded)
+            if chunks:
+                full_text = '\n'.join(chunks)
+                if len(full_text) > 50:
+                    return [Document(page_content=full_text, metadata={"source": file_path})]
+            
+            # 尝试 GBK 解码
+            decoded2 = raw.decode('gbk', errors='ignore')
+            chunks2 = re.findall(r'[\u4e00-\u9fff\u0020-\u007e\u3000-\u303f\uff00-\uffef]+', decoded2)
+            if chunks2:
+                full_text2 = '\n'.join(chunks2)
+                if len(full_text2) > 50:
+                    return [Document(page_content=full_text2, metadata={"source": file_path})]
+        except Exception as e:
+            logger.warning(f"二进制提取 .doc 文本失败: {e}")
+        
+        # 方法3：用 subprocess 调 LibreOffice（如果安装了）
         import subprocess
         import tempfile
-        import shutil as _shutil
-        
-        # 方法1：用 LibreOffice 转换
         try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                result = subprocess.run(
-                    ['soffice', '--headless', '--convert-to', 'docx', file_path, '--outdir', tmp_dir],
-                    capture_output=True, text=True, timeout=60
-                )
-                if result.returncode == 0:
-                    # 找到转换后的 .docx 文件
-                    basename = os.path.splitext(os.path.basename(file_path))[0]
-                    converted_path = os.path.join(tmp_dir, basename + '.docx')
-                    if os.path.exists(converted_path):
-                        docs = _load_docx_with_tables(converted_path)
-                        # 更新 source 为原始文件名
-                        for doc in docs:
-                            doc.metadata["source"] = file_path
-                        return docs
+            # 尝试常见路径
+            soffice_paths = ['soffice', 
+                           'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
+                           'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe']
+            for sp in soffice_paths:
+                try:
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        result = subprocess.run(
+                            [sp, '--headless', '--convert-to', 'docx', file_path, '--outdir', tmp_dir],
+                            capture_output=True, text=True, timeout=60
+                        )
+                        if result.returncode == 0:
+                            basename = os.path.splitext(os.path.basename(file_path))[0]
+                            converted_path = os.path.join(tmp_dir, basename + '.docx')
+                            if os.path.exists(converted_path):
+                                docs = _load_docx_with_tables(converted_path)
+                                for doc in docs:
+                                    doc.metadata["source"] = file_path
+                                return docs
+                    break
+                except Exception:
+                    continue
         except Exception as e:
             logger.warning(f"LibreOffice 转换 .doc 失败: {e}")
-        
-        # 方法2：用 Windows Word COM 对象（服务器上有 Word 时）
-        try:
-            import win32com.client
-            import pythoncom
-            pythoncom.CoInitialize()
-            word = win32com.client.Dispatch("Word.Application")
-            word.Visible = False
-            doc_obj = word.Documents.Open(file_path)
-            with tempfile.NamedTemporaryFile(suffix='.docx', delete=False, mode='wb') as tmp:
-                tmp_docx = tmp.name
-            doc_obj.SaveAs2(tmp_docx, FileFormat=16)  # 16 = wdFormatXMLDocument (.docx)
-            doc_obj.Close()
-            word.Quit()
-            pythoncom.CoUninitialize()
-            docs = _load_docx_with_tables(tmp_docx)
-            for doc in docs:
-                doc.metadata["source"] = file_path
-            os.unlink(tmp_docx)
-            return docs
-        except Exception as e:
-            logger.warning(f"Word COM 转换 .doc 失败: {e}")
-        
-        # 方法3：用 Docx2txtLoader（可能对部分 .doc 有效）
-        try:
-            loader = Docx2txtLoader(file_path)
-            return loader.load()
-        except Exception:
-            pass
         
         raise ValueError(f"无法读取 .doc 文件: {file_path}，请转换为 .docx 格式后上传")
     elif ext in (".xlsx", ".xls"):
