@@ -3031,6 +3031,84 @@ async def delete_external_kb_document(filename: str, username: str = Depends(req
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ===== 一键生成质量手册（SCskill）=====
+
+@router.post("/generate/manual", summary="一键生成质量手册")
+async def generate_manual_api(request: Request, username: str = Depends(require_auth)):
+    """调用 SCskill 生成质量手册，基于用户填写的体系调研信息"""
+    import subprocess
+    import sys as _sys
+
+    body = await request.json()
+    survey_data = body.get("survey_data", {})
+
+    if not survey_data:
+        raise HTTPException(status_code=400, detail="未提供体系调研数据")
+
+    # 定位 SCskill 脚本
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    script_path = os.path.join(project_root, "skills", "SCskill", "scripts", "generate_manual.py")
+
+    if not os.path.exists(script_path):
+        raise HTTPException(status_code=500, detail=f"SCskill 脚本未找到: {script_path}")
+
+    # 输出目录
+    export_dir = os.path.join(settings.DATA_DIR, "export")
+    os.makedirs(export_dir, exist_ok=True)
+
+    # 构造命令
+    survey_json = json.dumps(survey_data, ensure_ascii=False)
+    cmd = [
+        _sys.executable, script_path,
+        "--survey-json", survey_json,
+        "--output-dir", export_dir,
+    ]
+
+    logger.info(f"[SCskill] 生成质量手册: user={username}")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            encoding='utf-8',
+            errors='replace',
+            cwd=project_root,
+        )
+
+        if result.returncode != 0:
+            err = result.stderr[-500:] if result.stderr else "未知错误"
+            raise HTTPException(status_code=500, detail=f"生成失败: {err}")
+
+        # 解析输出
+        import re as _re
+        stdout = result.stdout or ""
+        json_match = _re.search(r'\[RESULT_JSON\]\s*(\{.*?\})\s*$', stdout, _re.DOTALL)
+        if json_match:
+            result_data = json.loads(json_match.group(1))
+            if result_data.get("status") == "success":
+                filename = os.path.basename(result_data.get("file_path", ""))
+                download_url = f"/api/v1/documents/export-download/{filename}"
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "download_url": download_url,
+                    "replacements": result_data.get("replacements", {}),
+                }
+            else:
+                raise HTTPException(status_code=500, detail=result_data.get("message", "生成失败"))
+
+        raise HTTPException(status_code=500, detail="脚本执行成功但未返回有效结果")
+    except HTTPException:
+        raise
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="生成超时（120秒）")
+    except Exception as e:
+        logger.exception(f"[SCskill] 异常: {e}")
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
 # ===== 体系调研文档上传与AI提取 =====
 
 @router.post("/survey/upload", summary="上传体系调研文档到临时目录")
