@@ -3348,7 +3348,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 "type": "success",
                 "filename": filename,
                 "download_url": download_url,
-                "modifications_count": len(modifications),
+                "modifications_count": modifications_count,
                 "stats": stats,
                 "model_used": current_model,
                 "progress": 100
