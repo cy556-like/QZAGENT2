@@ -2867,19 +2867,31 @@ def list_indexed_documents(agent_id: str = None, category: str = None, subcatego
     return sorted(list(sources))
 
 
+def _get_agent_dir(agent_id: str) -> str:
+    """根据 agent_id 获取对应的磁盘根目录
+    - __external__ → data/documents/external_kb/
+    - 其他 → data/documents/agent_{agent_id}/
+    """
+    if agent_id == "__external__":
+        return os.path.join(settings.DOCUMENTS_DIR, "external_kb")
+    return os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}")
+
+
 def list_categories(agent_id: str) -> list[str]:
     """列出某智能体下所有一级分类名（按 agent_id 隔离）
 
     数据源（合并去重）：
-    1. 磁盘扫描：data/documents/agent_{agent_id}/ 下的所有子文件夹
+    1. 磁盘扫描：agent_id 对应目录下的所有子文件夹
     2. ChromaDB metadata：所有该 agent 文档的 distinct category
     3. 关键词索引：所有该 agent 文档的 distinct category
 
     合并三者，确保空分类目录也能显示（用户刚创建还没传文件的分类）。
-    如果完全没有分类，返回默认的 5 个初始分类（手册/程序文件/三层次文件/记录表格/其他）。
+    如果完全没有分类，返回默认的初始分类。
 
-    排序规则：前 5 个固定顺序为 [手册, 程序文件, 三层次文件, 记录表格, 其他]，
-    用户新建的分类按创建顺序排在最后。
+    排序规则（仅对企业内部文件 agent 生效）：
+    前 5 个固定顺序为 [手册, 程序文件, 三层次文件, 记录表格, 其他]，
+    用户新建的分类按字母顺序排在最后。
+    外部知识库(__external__) 默认分组顺序：体系文件、按产品分类、按工艺分类、其他
     """
     if not agent_id:
         return []
@@ -2887,7 +2899,7 @@ def list_categories(agent_id: str) -> list[str]:
     cats = set()
 
     # 1. 磁盘扫描（支持空目录）
-    agent_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}")
+    agent_dir = _get_agent_dir(agent_id)
     if os.path.exists(agent_dir) and os.path.isdir(agent_dir):
         for item in os.listdir(agent_dir):
             item_path = os.path.join(agent_dir, item)
@@ -2912,14 +2924,18 @@ def list_categories(agent_id: str) -> list[str]:
         if entry.get("category"):
             cats.add(entry["category"])
 
-    # 如果完全没有分类，返回默认的 5 个初始分类
+    # 如果完全没有分类，返回默认初始分类
     if not cats:
+        if agent_id == "__external__":
+            return ['体系文件', '按产品分类', '按工艺分类', '其他']
         return ['手册', '程序文件', '三层次文件', '记录表格', '其他']
 
-    # 固定顺序的前 5 个分类
-    fixed_order = ['手册', '程序文件', '三层次文件', '记录表格', '其他']
+    # 固定顺序
+    if agent_id == "__external__":
+        fixed_order = ['体系文件', '按产品分类', '按工艺分类', '其他']
+    else:
+        fixed_order = ['手册', '程序文件', '三层次文件', '记录表格', '其他']
     result = []
-    # 先按固定顺序加入存在的分类
     for cat in fixed_order:
         if cat in cats:
             result.append(cat)
@@ -2933,7 +2949,7 @@ def list_subcategories(agent_id: str, category: str) -> list[str]:
     """列出某一级分类下的所有二级子目录名（按 agent_id 隔离）
 
     数据源：
-    1. 磁盘扫描：data/documents/agent_{agent_id}/{category}/ 下的子文件夹
+    1. 磁盘扫描：agent_id 对应目录/{category}/ 下的子文件夹
     2. ChromaDB metadata：所有该 category 下文档的 distinct subcategory
     3. 关键词索引：所有该 category 下文档的 distinct subcategory
 
@@ -2945,7 +2961,7 @@ def list_subcategories(agent_id: str, category: str) -> list[str]:
     subcats = set()
 
     # 1. 磁盘扫描（支持空目录）
-    cat_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    cat_dir = os.path.join(_get_agent_dir(agent_id), category)
     if os.path.exists(cat_dir) and os.path.isdir(cat_dir):
         for item in os.listdir(cat_dir):
             item_path = os.path.join(cat_dir, item)
@@ -2985,7 +3001,7 @@ def rename_subcategory(agent_id: str, category: str, old_sub: str, new_sub: str)
     if not new_sub:
         return {"status": "error", "message": "新名称不能为空"}
 
-    base_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    base_dir = os.path.join(_get_agent_dir(agent_id), category)
     old_dir = os.path.join(base_dir, old_sub)
     new_dir = os.path.join(base_dir, new_sub)
 
@@ -3035,7 +3051,7 @@ def delete_subcategory(agent_id: str, category: str, subcategory: str) -> dict:
     if not agent_id or not category or not subcategory:
         return {"status": "error", "message": "参数不完整"}
 
-    base_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    base_dir = os.path.join(_get_agent_dir(agent_id), category)
     sub_dir = os.path.join(base_dir, subcategory)
 
     # 1. 收集要删除的文件名

@@ -142,7 +142,7 @@ async def _sse_stream_wrapper(generator_factory, request: Request, session_id: s
     if cancelled_by_client:
         logger.info(f"SSE流完成（客户端主动断开）: session={session_id}")
 
-from app.rag.document import index_document, search_documents, list_indexed_documents, delete_document, update_document, delete_agent_collection, list_all_collections, load_document, export_document_as_docx, reindex_all_documents, get_indexing_mode, _get_export_dir, cleanup_export_files, _load_keyword_index, get_vector_store
+from app.rag.document import index_document, search_documents, list_indexed_documents, delete_document, update_document, delete_agent_collection, list_all_collections, load_document, export_document_as_docx, reindex_all_documents, get_indexing_mode, _get_export_dir, cleanup_export_files, _load_keyword_index, get_vector_store, _get_agent_dir
 
 from app.auth.user_manager import login_user, register_user, get_user_role, is_admin, list_all_users, delete_user, update_user_role, reset_user_password
 
@@ -1526,7 +1526,7 @@ async def create_subcategory_api(
     if subcategory in existing:
         raise HTTPException(status_code=400, detail=f"子目录「{subcategory}」已存在")
     # 创建磁盘文件夹（os.makedirs 会自动创建中间目录 agent_xxx/category）
-    sub_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category, subcategory)
+    sub_dir = os.path.join(_get_agent_dir(agent_id), category, subcategory)
     try:
         os.makedirs(sub_dir, exist_ok=True)
     except Exception as e:
@@ -1594,8 +1594,8 @@ async def rename_category_api(
         raise HTTPException(status_code=400, detail="分类名含非法字符")
 
     # 1. 重命名磁盘文件夹
-    old_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", old_cat)
-    new_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", new_cat)
+    old_dir = os.path.join(_get_agent_dir(agent_id), old_cat)
+    new_dir = os.path.join(_get_agent_dir(agent_id), new_cat)
     if os.path.exists(new_dir):
         raise HTTPException(status_code=400, detail=f"分类「{new_cat}」已存在")
     if os.path.exists(old_dir):
@@ -1645,7 +1645,7 @@ async def delete_category_api(
         raise HTTPException(status_code=400, detail="参数不完整")
 
     # 1. 删除磁盘文件夹
-    cat_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    cat_dir = os.path.join(_get_agent_dir(agent_id), category)
     if os.path.exists(cat_dir):
         import shutil
         shutil.rmtree(cat_dir, ignore_errors=True)
@@ -1696,7 +1696,7 @@ async def create_category_api(
     import re as _re
     if _re.search(r'[\\/:*?"<>|]', category):
         raise HTTPException(status_code=400, detail="分类名含非法字符")
-    cat_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    cat_dir = os.path.join(_get_agent_dir(agent_id), category)
     if os.path.exists(cat_dir):
         raise HTTPException(status_code=400, detail=f"分类「{category}」已存在")
     try:
@@ -3197,17 +3197,19 @@ async def get_agents(authorization: str = Header(None)):
 # ===== 外部知识库上传 =====
 
 @router.post("/external-kb/upload", summary="上传文档到全质知识库")
-async def external_kb_upload(file: UploadFile = File(...), category: str = Form(""), username: str = Depends(require_auth)):
-    """上传文档到外部知识库（external_kb collection），按子分类存储"""
+async def external_kb_upload(file: UploadFile = File(...), category: str = Form(""), subcategory: str = Form(""), username: str = Depends(require_auth)):
+    """上传文档到外部知识库（external_kb collection），按一级分类+二级子目录存储"""
     allowed_ext = {".pdf", ".txt", ".md", ".docx", ".xlsx", ".xls", ".doc"}
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in allowed_ext:
         raise HTTPException(status_code=400, detail=f"不支持的格式: {ext}")
 
-    # 保存文件到外部知识库目录（按子分类存子目录）
+    # 保存文件到外部知识库目录（按一级分类 + 二级子目录存子目录）
     ext_doc_dir = os.path.join(settings.DOCUMENTS_DIR, "external_kb")
     if category:
         ext_doc_dir = os.path.join(ext_doc_dir, category)
+    if subcategory:
+        ext_doc_dir = os.path.join(ext_doc_dir, subcategory)
     os.makedirs(ext_doc_dir, exist_ok=True)
     decoded_filename = file.filename
     file_path = os.path.join(ext_doc_dir, decoded_filename)
@@ -3216,11 +3218,11 @@ async def external_kb_upload(file: UploadFile = File(...), category: str = Form(
     with open(file_path, "wb") as f:
         f.write(content_bytes)
 
-    logger.info(f"[外部知识库上传] 用户={username}, 文件={decoded_filename}, 分类={category}")
+    logger.info(f"[外部知识库上传] 用户={username}, 文件={decoded_filename}, 分类={category}/{subcategory}")
 
-    # 索引到 external_kb collection（带 category 元数据）
+    # 索引到 external_kb collection（带 category + subcategory 元数据）
     try:
-        index_result = await asyncio.to_thread(index_document, file_path, decoded_filename, agent_id="__external__", category=category or None)
+        index_result = await asyncio.to_thread(index_document, file_path, decoded_filename, agent_id="__external__", category=category or None, subcategory=subcategory or None)
         if index_result.get("status") == "error":
             raise HTTPException(status_code=500, detail=index_result.get("message", "索引失败"))
         chunks = index_result.get("chunks", 0)
@@ -3234,10 +3236,10 @@ async def external_kb_upload(file: UploadFile = File(...), category: str = Form(
 
 
 @router.get("/external-kb/documents", summary="列出全质知识库文档")
-async def external_kb_documents(category: str = Query(None), username: str = Depends(require_auth)):
-    """列出外部知识库的所有文档（按子分类过滤）"""
+async def external_kb_documents(category: str = Query(None), subcategory: str = Query(None), username: str = Depends(require_auth)):
+    """列出外部知识库的所有文档（按一级分类+二级子目录过滤）"""
     try:
-        docs = await asyncio.to_thread(list_indexed_documents, agent_id="__external__", category=category)
+        docs = await asyncio.to_thread(list_indexed_documents, agent_id="__external__", category=category, subcategory=subcategory)
         return {"success": True, "documents": docs}
     except Exception as e:
         return {"success": True, "documents": []}

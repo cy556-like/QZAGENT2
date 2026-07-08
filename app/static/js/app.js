@@ -3114,82 +3114,327 @@ function fillSurveyForm(fields) {
 }
 
 
-// ===== 外部知识库分类管理 =====
-let currentExtKbCategory = '体系文件-手册';
+// ===== 全质知识库管理（三列布局）=====
+const EXT_KB_AGENT_ID = '__external__';
+let currentExtKbCategory = '';
+let currentExtKbSubcategory = null;
+let extKbCategories = [];
 
-function toggleExtCatGroup(btnEl) {
-    const group = btnEl.closest('.kb-cat-group');
-    if (group) group.classList.toggle('collapsed');
+// 从后端加载一级分类列表并渲染到第一列
+async function loadExtKbCategories() {
+    const listEl = document.getElementById('extKbCatList');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="kb-doc-empty">加载中...</div>';
+    try {
+        const url = '/api/v1/kb/categories?agent_id=' + encodeURIComponent(EXT_KB_AGENT_ID);
+        const resp = await fetch(url, { headers: apiHeaders() });
+        const data = await resp.json();
+        const cats = data.categories || [];
+        extKbCategories = cats;
+        if (cats.length === 0) {
+            listEl.innerHTML = '<div class="kb-doc-empty">暂无分类，点击右上角 + 新建</div>';
+            return;
+        }
+        let html = '';
+        cats.forEach(cat => {
+            const safeCat = escapeHtml(cat);
+            const jsCat = cat.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            html += '<button class="kb-cat-item" onclick="selectExtKbCategory(\'' + jsCat + '\', this)">' +
+                '<span class="kb-cat-name">' + safeCat + '</span>' +
+                '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
+                    '<span class="kb-cat-edit" onclick="renameExtKbCategory(\'' + jsCat + '\', event)" title="重命名">✎</span>' +
+                    '<span class="kb-cat-del" onclick="delExtKbCategory(\'' + jsCat + '\', event)" title="删除">×</span>' +
+                '</span>' +
+            '</button>';
+        });
+        listEl.innerHTML = html;
+    } catch (e) {
+        console.error('[ExtKB] 加载分类失败:', e);
+        listEl.innerHTML = '<div class="kb-doc-empty">加载失败，请重试</div>';
+    }
+}
+
+function appendExtKbCategoryButton(name) {
+    const catList = document.getElementById('extKbCatList');
+    if (!catList) return;
+    const emptyEl = catList.querySelector('.kb-doc-empty');
+    if (emptyEl) emptyEl.remove();
+    const safeName = escapeHtml(name);
+    const jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    const btn = document.createElement('button');
+    btn.className = 'kb-cat-item';
+    btn.innerHTML = '<span class="kb-cat-name">' + safeName + '</span>' +
+        '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
+            '<span class="kb-cat-edit" onclick="renameExtKbCategory(\'' + jsName + '\', event)" title="重命名">✎</span>' +
+            '<span class="kb-cat-del" onclick="delExtKbCategory(\'' + jsName + '\', event)" title="删除">×</span>' +
+        '</span>';
+    btn.onclick = function() { selectExtKbCategory(name, this); };
+    catList.appendChild(btn);
 }
 
 function selectExtKbCategory(cat, btnEl) {
     currentExtKbCategory = cat;
+    currentExtKbSubcategory = null;
     document.querySelectorAll('#extKbCatList .kb-cat-item').forEach(b => b.classList.remove('active'));
     if (btnEl) btnEl.classList.add('active');
+    const subcatTitleEl = document.getElementById('extKbSubcatTitle');
+    if (subcatTitleEl) subcatTitleEl.textContent = cat + ' 的子目录';
+    const subcatAddBtn = document.getElementById('extKbSubcatAddBtn');
+    if (subcatAddBtn) subcatAddBtn.style.display = '';
+    const fileTitleEl = document.getElementById('extKbFileTitle');
+    if (fileTitleEl) fileTitleEl.textContent = '请先选择中间子目录';
+    const uploadBtn = document.getElementById('extKbFileUploadBtn');
+    if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.style.opacity = '0.5'; uploadBtn.style.cursor = 'not-allowed'; }
+    const listEl = document.getElementById('extKbDocList');
+    if (listEl) listEl.innerHTML = '<div class="kb-doc-empty">请先在中间选择一个子目录</div>';
+    loadExtKbSubcategories();
+}
+
+async function loadExtKbSubcategories() {
+    const listEl = document.getElementById('extKbSubcatList');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="kb-doc-empty">加载中...</div>';
+    try {
+        const url = '/api/v1/kb/subcategories?agent_id=' + encodeURIComponent(EXT_KB_AGENT_ID) +
+            '&category=' + encodeURIComponent(currentExtKbCategory);
+        const resp = await fetch(url, { headers: apiHeaders() });
+        const data = await resp.json();
+        const subcats = data.subcategories || [];
+        if (subcats.length === 0) {
+            listEl.innerHTML = '<div class="kb-doc-empty">暂无子目录，点击右上角 + 新建</div>';
+            return;
+        }
+        let html = '';
+        subcats.forEach(sub => {
+            const safeSub = escapeHtml(sub);
+            const jsSub = sub.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            html += '<button class="kb-cat-item" onclick="selectExtKbSubcategory(\'' + jsSub + '\', this)">' +
+                '<span class="kb-cat-name">' + safeSub + '</span>' +
+                '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
+                    '<span class="kb-cat-edit" onclick="renameExtKbSubcategory(\'' + jsSub + '\', event)" title="重命名">✎</span>' +
+                    '<span class="kb-cat-del" onclick="delExtKbSubcategory(\'' + jsSub + '\', event)" title="删除">×</span>' +
+                '</span>' +
+            '</button>';
+        });
+        listEl.innerHTML = html;
+    } catch (e) {
+        console.error('[ExtKB] 加载子目录失败:', e);
+        listEl.innerHTML = '<div class="kb-doc-empty">加载失败，请重试</div>';
+    }
+}
+
+function selectExtKbSubcategory(sub, btnEl) {
+    currentExtKbSubcategory = sub;
+    document.querySelectorAll('#extKbSubcatList .kb-cat-item').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
     const titleEl = document.getElementById('extKbFileTitle');
-    if (titleEl) titleEl.textContent = cat.split('-').pop();
+    if (titleEl) titleEl.textContent = currentExtKbCategory + ' / ' + sub;
+    const uploadBtn = document.getElementById('extKbFileUploadBtn');
+    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.style.opacity = ''; uploadBtn.style.cursor = ''; }
     loadExtKbDocs();
 }
 
-function addExtKbSubCategory(parentGroup) {
-    const name = prompt('请输入新分类名称：');
+async function addExtKbCategory() {
+    let name = prompt('请输入新分类名称：');
     if (!name || !name.trim()) return;
-    const subListId = parentGroup === '按产品分类' ? 'extKbProductList' :
-                      parentGroup === '按工艺分类' ? 'extKbProcessList' : null;
-    if (subListId) {
-        const subList = document.getElementById(subListId);
-        if (subList) {
-            const btn = document.createElement('button');
-            btn.className = 'kb-cat-item';
-            btn.textContent = name.trim();
-            btn.onclick = function() { selectExtKbCategory(parentGroup + '-' + name.trim(), this); };
-            subList.appendChild(btn);
+    name = name.trim();
+    try {
+        const resp = await fetch('/api/v1/kb/categories', {
+            method: 'POST',
+            headers: apiHeaders(),
+            body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: name })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showToast('创建失败：' + (data.detail || data.message || '未知错误'), 3000);
+            return;
         }
-    } else {
-        // 其他分类：在最后一个 group 的 sub-list 里添加
-        const groups = document.querySelectorAll('#extKbCatList .kb-cat-group');
-        if (groups.length >= 4) {
-            const subList = groups[3].querySelector('.kb-cat-sub-list');
-            if (subList) {
-                const btn = document.createElement('button');
-                btn.className = 'kb-cat-item';
-                btn.textContent = name.trim();
-                btn.onclick = function() { selectExtKbCategory('其他-' + name.trim(), this); };
-                subList.appendChild(btn);
+        appendExtKbCategoryButton(name);
+        extKbCategories.push(name);
+        showToast('已添加分类：' + name, 2000);
+    } catch (e) {
+        showToast('创建失败：' + e.message, 3000);
+    }
+}
+
+async function delExtKbCategory(name, event) {
+    event.stopPropagation();
+    if (!confirm('确认删除分类「' + name + '」？该分类下所有子目录和文件都会被删除！')) return;
+    try {
+        const resp = await fetch('/api/v1/kb/categories', {
+            method: 'DELETE',
+            headers: apiHeaders(),
+            body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: name })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showToast('删除失败：' + (data.detail || data.message || '未知错误'), 3000);
+            return;
+        }
+        extKbCategories = extKbCategories.filter(c => c !== name);
+        await loadExtKbCategories();
+        if (currentExtKbCategory === name) {
+            const firstBtn = document.querySelector('#extKbCatList .kb-cat-item');
+            if (firstBtn) {
+                const firstName = firstBtn.querySelector('.kb-cat-name').textContent;
+                selectExtKbCategory(firstName, firstBtn);
+            } else {
+                currentExtKbCategory = '';
+                currentExtKbSubcategory = null;
+                document.getElementById('extKbSubcatTitle').textContent = '请先选择左侧分类';
+                document.getElementById('extKbSubcatAddBtn').style.display = 'none';
+                document.getElementById('extKbSubcatList').innerHTML = '<div class="kb-doc-empty">请先在左侧选择一个分类</div>';
+                document.getElementById('extKbFileTitle').textContent = '请先选择分类和子目录';
+                document.getElementById('extKbDocList').innerHTML = '<div class="kb-doc-empty">请先选择分类和子目录</div>';
+                const uploadBtn = document.getElementById('extKbFileUploadBtn');
+                if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.style.opacity = '0.5'; uploadBtn.style.cursor = 'not-allowed'; }
             }
         }
+        showToast('已删除分类：' + name, 2000);
+    } catch (e) {
+        showToast('删除失败：' + e.message, 3000);
     }
-    showToast('已添加：' + name.trim(), 2000);
+}
+
+async function renameExtKbCategory(oldName, event) {
+    event.stopPropagation();
+    let newName = prompt('请输入新的分类名称：', oldName);
+    if (!newName || !newName.trim() || newName === oldName) return;
+    try {
+        const resp = await fetch('/api/v1/kb/categories', {
+            method: 'PUT',
+            headers: apiHeaders(),
+            body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, old_category: oldName, new_category: newName.trim() })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showToast('重命名失败：' + (data.detail || data.message || '未知错误'), 3000);
+            return;
+        }
+        const wasCurrent = currentExtKbCategory === oldName;
+        await loadExtKbCategories();
+        if (wasCurrent) {
+            currentExtKbCategory = newName.trim();
+            document.querySelectorAll('#extKbCatList .kb-cat-item').forEach(btn => {
+                const nameEl = btn.querySelector('.kb-cat-name');
+                if (nameEl && nameEl.textContent === newName.trim()) {
+                    selectExtKbCategory(newName.trim(), btn);
+                }
+            });
+        }
+        showToast('已重命名：' + oldName + ' → ' + newName.trim(), 2000);
+    } catch (e) {
+        showToast('重命名失败：' + e.message, 3000);
+    }
+}
+
+async function addExtKbSubcategory() {
+    if (!currentExtKbCategory) {
+        showToast('请先选择左侧分类', 2000);
+        return;
+    }
+    let name = prompt('请输入新子目录名称：');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    try {
+        const resp = await fetch('/api/v1/kb/subcategories', {
+            method: 'POST',
+            headers: apiHeaders(),
+            body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: currentExtKbCategory, subcategory: name })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showToast('创建失败：' + (data.detail || data.message || '未知错误'), 3000);
+            return;
+        }
+        await loadExtKbSubcategories();
+        showToast('已添加子目录：' + name, 2000);
+    } catch (e) {
+        showToast('创建失败：' + e.message, 3000);
+    }
+}
+
+async function delExtKbSubcategory(name, event) {
+    event.stopPropagation();
+    if (!confirm('确认删除子目录「' + name + '」？该子目录下所有文件都会被删除！')) return;
+    try {
+        const resp = await fetch('/api/v1/kb/subcategories', {
+            method: 'DELETE',
+            headers: apiHeaders(),
+            body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: currentExtKbCategory, subcategory: name })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showToast('删除失败：' + (data.detail || data.message || '未知错误'), 3000);
+            return;
+        }
+        if (currentExtKbSubcategory === name) {
+            currentExtKbSubcategory = null;
+            const uploadBtn = document.getElementById('extKbFileUploadBtn');
+            if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.style.opacity = '0.5'; uploadBtn.style.cursor = 'not-allowed'; }
+            document.getElementById('extKbFileTitle').textContent = '请先选择中间子目录';
+            document.getElementById('extKbDocList').innerHTML = '<div class="kb-doc-empty">请先在中间选择一个子目录</div>';
+        }
+        await loadExtKbSubcategories();
+        showToast('已删除子目录：' + name, 2000);
+    } catch (e) {
+        showToast('删除失败：' + e.message, 3000);
+    }
+}
+
+async function renameExtKbSubcategory(oldName, event) {
+    event.stopPropagation();
+    let newName = prompt('请输入新的子目录名称：', oldName);
+    if (!newName || !newName.trim() || newName === oldName) return;
+    try {
+        const resp = await fetch('/api/v1/kb/subcategories', {
+            method: 'PUT',
+            headers: apiHeaders(),
+            body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: currentExtKbCategory, old_subcategory: oldName, new_subcategory: newName.trim() })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showToast('重命名失败：' + (data.detail || data.message || '未知错误'), 3000);
+            return;
+        }
+        if (currentExtKbSubcategory === oldName) {
+            currentExtKbSubcategory = newName.trim();
+            document.getElementById('extKbFileTitle').textContent = currentExtKbCategory + ' / ' + newName.trim();
+        }
+        await loadExtKbSubcategories();
+        showToast('已重命名：' + oldName + ' → ' + newName.trim(), 2000);
+    } catch (e) {
+        showToast('重命名失败：' + e.message, 3000);
+    }
 }
 
 async function loadExtKbDocs() {
     const docList = document.getElementById('extKbDocList');
     if (!docList) return;
+    if (!currentExtKbSubcategory) {
+        docList.innerHTML = '<div class="kb-doc-empty">请先在中间选择一个子目录</div>';
+        return;
+    }
     docList.innerHTML = '<div class="kb-doc-empty">加载中...</div>';
-    
     try {
-        const url = '/api/v1/external-kb/documents?category=' + encodeURIComponent(currentExtKbCategory || '');
-        const resp = await fetch(url, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const url = '/api/v1/external-kb/documents?category=' + encodeURIComponent(currentExtKbCategory || '') +
+            '&subcategory=' + encodeURIComponent(currentExtKbSubcategory || '');
+        const resp = await fetch(url, { headers: apiHeaders() });
         const data = await resp.json();
-        
         if (data.success && data.documents && data.documents.length > 0) {
             let html = '';
             data.documents.forEach(doc => {
                 const name = doc.filename || doc.name || doc;
-                html += '<div class="kb-doc-item"><span class="kb-doc-name">' + escapeHtml(name) + '</span><button class="kb-doc-del-btn" onclick="deleteExtKbDoc(\'' + name + '\')">删除</button></div>';
+                const safeName = (name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                html += '<div class="kb-doc-item"><span class="kb-doc-name">' + escapeHtml(name) + '</span><button class="kb-doc-del-btn" onclick="deleteExtKbDoc(\'' + safeName + '\')">删除</button></div>';
             });
             docList.innerHTML = html;
         } else {
             docList.innerHTML = '<div class="kb-doc-empty">暂无文件，点击右上角上传</div>';
         }
-        
-        // 更新统计（文档数 + 切片数）
+        // 更新统计
         const statUrl = '/api/v1/external-kb/stats?category=' + encodeURIComponent(currentExtKbCategory || '');
-        const statResp = await fetch(statUrl, {
-            headers: { 'Authorization': 'Bearer ' + authToken }
-        });
+        const statResp = await fetch(statUrl, { headers: apiHeaders() });
         const statData = await statResp.json();
         if (statData.success) {
             const docEl = document.getElementById('extKbStatDocCount');
@@ -3198,7 +3443,7 @@ async function loadExtKbDocs() {
             if (chunkEl) chunkEl.textContent = statData.chunk_count || 0;
         }
     } catch (e) {
-        docList.innerHTML = '<div class="kb-doc-empty">暂无文件，点击右上角上传</div>';
+        docList.innerHTML = '<div class="kb-doc-empty">加载失败，请重试</div>';
     }
 }
 
@@ -3207,7 +3452,7 @@ async function deleteExtKbDoc(filename) {
     try {
         const resp = await fetch('/api/v1/external-kb/documents/' + encodeURIComponent(filename), {
             method: 'DELETE',
-            headers: { 'Authorization': 'Bearer ' + authToken }
+            headers: apiHeaders()
         });
         const data = await resp.json();
         if (data.success) {
@@ -3224,21 +3469,23 @@ async function deleteExtKbDoc(filename) {
 async function onExtKbFileSelected(event) {
     const file = event.target.files[0];
     if (!file) return;
-    
+    if (!currentExtKbCategory || !currentExtKbSubcategory) {
+        showToast('请先选择分类和子目录', 3000);
+        event.target.value = '';
+        return;
+    }
     showToast('正在上传: ' + file.name, 2000);
-    
     try {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('category', currentExtKbCategory || '');
-        
+        formData.append('subcategory', currentExtKbSubcategory || '');
         const resp = await fetch('/api/v1/external-kb/upload', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + authToken },
             body: formData
         });
         const data = await resp.json();
-        
         if (data.success) {
             const chunks = data.chunks || 0;
             showToast('✓ 上传成功: ' + file.name + (chunks ? '（共 ' + chunks + ' 个分块）' : ''), 3000);
@@ -3805,6 +4052,29 @@ function showExternalKbPage() {
     if (externalKbPage) externalKbPage.style.display = '';
     // push history state
     history.pushState({page: 'external_kb'}, '');
+    // 进入全质知识库时，重置子目录选中状态，加载第一列分类列表
+    currentExtKbSubcategory = null;
+    const uploadBtn = document.getElementById('extKbFileUploadBtn');
+    if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.style.opacity = '0.5'; uploadBtn.style.cursor = 'not-allowed'; }
+    const fileTitleEl = document.getElementById('extKbFileTitle');
+    if (fileTitleEl) fileTitleEl.textContent = '请先选择中间子目录';
+    const docListEl = document.getElementById('extKbDocList');
+    if (docListEl) docListEl.innerHTML = '<div class="kb-doc-empty">请先在中间选择一个子目录</div>';
+    // 加载第一列分类并选中第一个
+    (async () => {
+        await loadExtKbCategories();
+        const firstCatBtn = document.querySelector('#extKbCatList .kb-cat-item');
+        if (firstCatBtn) {
+            const firstName = firstCatBtn.querySelector('.kb-cat-name') ?
+                firstCatBtn.querySelector('.kb-cat-name').textContent : firstCatBtn.textContent.trim();
+            selectExtKbCategory(firstName, firstCatBtn);
+        } else {
+            currentExtKbCategory = '';
+            document.getElementById('extKbSubcatTitle').textContent = '请先创建分类';
+            document.getElementById('extKbSubcatAddBtn').style.display = 'none';
+            document.getElementById('extKbSubcatList').innerHTML = '<div class="kb-doc-empty">请先在左侧创建分类</div>';
+        }
+    })();
 }
 
 function hideExternalKbPage() {

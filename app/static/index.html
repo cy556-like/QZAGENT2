@@ -571,59 +571,39 @@
                 </div>
             </div>
             <div class="kb-page-body kb-page-body-new">
-                <div class="kb-layout">
-                    <!-- 左列：分类（带下拉展开） -->
+                <div class="kb-layout kb-layout-three-col">
+                    <!-- 第一列：一级分类（带 + 新建） -->
                     <div class="kb-cat-col">
                         <div class="kb-cat-panel">
                             <div class="kb-cat-header">
                                 <span>文件分类</span>
+                                <button class="kb-cat-add-btn" onclick="addExtKbCategory()" title="新建分类">+</button>
                             </div>
                             <div class="kb-cat-list" id="extKbCatList">
-                                <!-- 体系文件 -->
-                                <div class="kb-cat-group">
-                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">体系文件 <span class="cat-arrow">▾</span></button>
-                                    <div class="kb-cat-sub-list">
-                                        <button class="kb-cat-item active" onclick="selectExtKbCategory('体系文件-手册', this)">手册</button>
-                                        <button class="kb-cat-item" onclick="selectExtKbCategory('体系文件-程序文件', this)">程序文件</button>
-                                        <button class="kb-cat-item" onclick="selectExtKbCategory('体系文件-三层次文件', this)">三层次文件</button>
-                                        <button class="kb-cat-item" onclick="selectExtKbCategory('体系文件-记录表格', this)">记录表格</button>
-                                    </div>
-                                </div>
-                                <!-- 按产品分类 -->
-                                <div class="kb-cat-group">
-                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">按产品分类 <span class="cat-arrow">▾</span></button>
-                                    <div class="kb-cat-sub-list" id="extKbProductList">
-                                        <button class="kb-cat-item" onclick="selectExtKbCategory('按产品分类-通用', this)">通用</button>
-                                    </div>
-                                    <button class="kb-cat-add-sub" onclick="addExtKbSubCategory('按产品分类')">+ 添加产品</button>
-                                </div>
-                                <!-- 按工艺分类 -->
-                                <div class="kb-cat-group">
-                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">按工艺分类 <span class="cat-arrow">▾</span></button>
-                                    <div class="kb-cat-sub-list" id="extKbProcessList">
-                                        <button class="kb-cat-item" onclick="selectExtKbCategory('按工艺分类-通用', this)">通用</button>
-                                    </div>
-                                    <button class="kb-cat-add-sub" onclick="addExtKbSubCategory('按工艺分类')">+ 添加工艺</button>
-                                </div>
-                                <!-- 其他 -->
-                                <div class="kb-cat-group">
-                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">其他 <span class="cat-arrow">▾</span></button>
-                                    <div class="kb-cat-sub-list">
-                                        <button class="kb-cat-item" onclick="selectExtKbCategory('其他-标准及工具原文', this)">标准及工具原文</button>
-                                    </div>
-                                    <button class="kb-cat-add-sub" onclick="addExtKbSubCategory('其他')">+ 添加分类</button>
-                                </div>
+                                <div class="kb-doc-empty">加载中...</div>
                             </div>
                         </div>
                     </div>
-                    <!-- 右列：文件列表 -->
+                    <!-- 第二列：二级子目录 -->
+                    <div class="kb-subcat-col">
+                        <div class="kb-cat-panel">
+                            <div class="kb-cat-header">
+                                <span class="kb-subcat-title" id="extKbSubcatTitle">请先选择左侧分类</span>
+                                <button class="kb-cat-add-btn" onclick="addExtKbSubcategory()" title="新建子目录" id="extKbSubcatAddBtn" style="display:none;">+</button>
+                            </div>
+                            <div class="kb-cat-list" id="extKbSubcatList">
+                                <div class="kb-doc-empty">请先在左侧选择一个分类</div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 第三列：文件列表 -->
                     <div class="kb-file-col">
                         <div class="kb-file-header">
-                            <span class="kb-file-title" id="extKbFileTitle">手册</span>
-                            <button class="kb-file-upload-btn" onclick="document.getElementById('extKbFileInput').click()">上传文件</button>
+                            <span class="kb-file-title" id="extKbFileTitle">请先选择分类和子目录</span>
+                            <button class="kb-file-upload-btn" id="extKbFileUploadBtn" onclick="document.getElementById('extKbFileInput').click()" disabled style="opacity:0.5;cursor:not-allowed;">上传文件</button>
                         </div>
                         <div class="kb-file-list" id="extKbDocList">
-                            <div class="kb-doc-empty">暂无文件，点击右上角上传</div>
+                            <div class="kb-doc-empty">请先选择左侧分类和中间子目录</div>
                         </div>
                     </div>
                 </div>
