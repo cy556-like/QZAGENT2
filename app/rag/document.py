@@ -1279,7 +1279,7 @@ def _load_image_as_document(file_path: str) -> list:
 def load_document(file_path: str) -> list:
     """
     根据文件类型加载文档
-    支持：PDF、TXT、MD、DOCX、XLSX、XLS、图片(PNG/JPG/JPEG/GIF/BMP/WebP)
+    支持：PDF、TXT、MD、DOCX、DOC、XLSX、XLS、图片(PNG/JPG/JPEG/GIF/BMP/WebP)
 
     DOCX 文件使用 python-docx 加载，保留表格结构为 Markdown 格式，
     解决 Docx2txtLoader 展平表格导致结构丢失的问题。
@@ -1299,12 +1299,38 @@ def load_document(file_path: str) -> list:
         return loader.load()
     elif ext == ".docx":
         return _load_docx_with_tables(file_path)
+    elif ext == ".doc":
+        # .doc 格式：用 Docx2txtLoader 尝试加载，失败则用 textract
+        try:
+            loader = Docx2txtLoader(file_path)
+            return loader.load()
+        except Exception:
+            # Docx2txtLoader 可能不支持旧版 .doc，用 textract 兜底
+            try:
+                import textract
+                text = textract.process(file_path).decode('utf-8')
+                from langchain_core.documents import Document
+                return [Document(page_content=text, metadata={"source": file_path})]
+            except Exception:
+                # 最终兜底：用 antiword 或 LibreOffice
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ['antiword', file_path],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        from langchain_core.documents import Document
+                        return [Document(page_content=result.stdout, metadata={"source": file_path})]
+                except Exception:
+                    pass
+                raise ValueError(f"无法读取 .doc 文件: {file_path}，请转换为 .docx 格式后上传")
     elif ext in (".xlsx", ".xls"):
         return load_xlsx_document(file_path)
     elif ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
         return _load_image_as_document(file_path)
     else:
-        raise ValueError(f"不支持的文件格式: {ext}，仅支持 PDF/TXT/MD/DOCX/XLSX/XLS/图片")
+        raise ValueError(f"不支持的文件格式: {ext}，仅支持 PDF/TXT/MD/DOCX/DOC/XLSX/XLS/图片")
 
 
 def _split_markdown_by_headers(docs: list, chunk_size: int = 800, chunk_overlap: int = 200) -> list:
