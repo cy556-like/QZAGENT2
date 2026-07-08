@@ -3895,10 +3895,16 @@ function selectKbSubcategory(sub, btnEl) {
 }
 
 async function addKbCategory() {
+    console.log('[KB] addKbCategory 被调用, currentAgentId=', currentAgentId);
     const name = prompt('请输入新分类名称：');
+    console.log('[KB] prompt 返回:', name);
     if (!name || !name.trim()) return;
     name = name.trim();
-    if (!currentAgentId) { showToast('请先选择智能体'); return; }
+    if (!currentAgentId) {
+        console.warn('[KB] currentAgentId 为空，无法创建分类');
+        showToast('请先选择智能体', 3000);
+        return;
+    }
     console.log('[KB] 新建分类:', name, 'agent:', currentAgentId);
     try {
         const resp = await fetch('/api/v1/kb/categories', {
@@ -4023,11 +4029,17 @@ async function renameKbCategory(oldName, event) {
 }
 
 async function addKbSubcategory() {
-    if (!currentAgentId || !currentKbCategory) {
-        showToast('请先选择左侧分类', 2000);
+    console.log('[KB] addKbSubcategory 被调用, currentAgentId=', currentAgentId, 'currentKbCategory=', currentKbCategory);
+    if (!currentAgentId) {
+        showToast('请先选择智能体', 3000);
+        return;
+    }
+    if (!currentKbCategory) {
+        showToast('请先在左侧选择一个分类', 3000);
         return;
     }
     const name = prompt('请输入新子目录名称：');
+    console.log('[KB] prompt 返回:', name);
     if (!name || !name.trim()) return;
     name = name.trim();
     console.log('[KB] 新建子目录:', name, 'agent:', currentAgentId, 'category:', currentKbCategory);
