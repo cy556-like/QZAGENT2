@@ -1,0 +1,8 @@
+[submodule "skills/8d-skill"]
+        path = skills/8d-skill
+        url = https://github.com/cy556-like/8DSKILLNEW.git
+        branch = main
+[submodule "skills/pfmea-dfmea-skill"]
+	path = skills/pfmea-dfmea-skill
+	url = https://github.com/cy556-like/PFMEA-DFMEA-SKILL.git
+        branch = main

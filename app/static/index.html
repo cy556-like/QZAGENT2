@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+
+
+<html lang="zh-CN">
+
+
+<head>
+
+
+    <meta charset="UTF-8">
+
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+
+    <title>体系智能体</title>
+
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/icon-96.png">
+
+
+    <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+
+
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
+
+    <link rel="manifest" href="/static/manifest.json">
+
+
+    <meta name="mobile-web-app-capable" content="yes">
+
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
+
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+
+    <meta name="apple-mobile-web-app-title" content="ForgeAgent">
+
+
+    <meta name="theme-color" content="#15589B">
+
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+
+
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+
+
+    <link rel="stylesheet" href="/static/css/style.css?v=20260614k">
+
+
+</head>
+
+
+<body>
+
+
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebarMobile()"></div>
+
+
+<div class="toast" id="toast" role="alert" aria-live="polite"></div>
+
+
+
+
+
+<!-- Landing Page 已删除，直接显示登录页 -->
+
+
+
+
+
+<!-- ========== Login Modal (默认显示为首页) ========== -->
+
+
+<div class="modal-overlay show" id="loginModal" role="dialog" aria-label="登录" aria-modal="true">
+
+
+    <div class="login-fullscreen">
+
+
+        <!-- Top Red Bar -->
+
+
+        <div class="login-top-bar">
+
+
+            <img class="login-top-bar-logo" src="/static/images/login-logo.png" alt="体系智能体"><span class="login-top-bar-brand">体系智能体</span>
+
+
+        </div>
+
+
+        <!-- Main Content Area -->
+
+
+        <div class="login-main-area">
+
+
+            <!-- Left: Calligraphy -->
+
+
+            <div class="login-left-panel">
+
+
+                <img class="login-calligraphy-img" src="/static/images/calligraphy_clean.png" alt="携手并进 共赢未来">
+
+
+            </div>
+
+
+            <!-- Right: Login Form -->
+
+
+            <div class="login-right-panel">
+
+
+                <div class="login-form-card">
+
+
+                    <div class="login-form-header">
+
+
+                        <div class="login-form-title-row">
+
+
+                            <svg class="login-lock-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+
+
+                            <h3 id="loginModalTitle">用户登录</h3>
+
+
+                        </div>
+
+
+                        <p class="login-subtitle" id="loginModalSubtitle">USERS LOGIN</p>
+
+
+                        <div class="login-subtitle-line"></div>
+
+
+                    </div>
+
+
+                    <div class="login-modal-body">
+
+
+                        <div id="loginForm" role="tabpanel">
+
+
+                            <div class="form-group"><input type="text" id="loginUser" placeholder="输入用户名" autocomplete="username"></div>
+
+
+                            <div class="form-group"><input type="password" id="loginPass" placeholder="输入密码" onkeydown="if(event.key==='Enter')doLogin()" autocomplete="current-password"></div>
+
+
+                            <button class="btn btn-login" onclick="doLogin()" aria-label="登录">登 录</button>
+
+
+                            <div class="msg-box" id="loginMsg" role="status" aria-live="polite"></div>
+
+
+                        </div>
+
+
+                    </div>
+
+
+                </div>
+
+
+            </div>
+
+
+        </div>
+
+
+        <!-- Bottom Footer Bar -->
+
+
+        <div class="login-footer-bar">
+
+
+            <span class="login-footer-icp">版权所有ICP备12034805号-1</span>
+
+
+            <span class="login-footer-contact">联系客服 18601256219（微信同号）每周7天 8:00-20:00</span>
+
+
+        </div>
+
+
+    </div>
+
+
+</div>
+
+
+
+
+
+<!-- Chat Page -->
+
+
+<div class="chat-page" id="chatPage" role="main">
+
+
+    <aside class="sidebar" id="sidebar" role="navigation" aria-label="对话列表">
+
+
+        <div class="sidebar-header">
+
+
+            <div class="sidebar-brand" id="sidebarBrand"><img class="sidebar-brand-logo" src="/static/images/chat-logo.png" alt="体系智能体"><span class="sidebar-brand-name">体系智能体</span></div>
+
+
+            <div class="sidebar-section-title" id="agentsSectionTitle" style="display:none;"><span class="section-title-icon">👉</span><span class="section-title-text">请点击：</span></div>
+            <div class="sidebar-gen-list" id="sidebarGenList" style="padding:0 12px;">
+                <button class="sidebar-gen-btn sidebar-agent-btn" onclick="showSurveyForm()" title="填写企业体系调研信息">📋 填写体系调研</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('manual')" title="基于体系调研信息生成质量管理手册">📄 一键生成手册</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('procedure')" title="基于体系调研信息生成程序文件">📋 一键生成程序文件</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('third-level')" title="基于体系调研信息生成三层次文件">📝 一键生成三层次文件</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('record')" title="基于体系调研信息生成记录表格">📊 一键生成记录表格</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('rectification')" title="基于体系调研信息生成不合格项整改报告">🔧 不合格项整改</button>
+            </div>
+        </div>
+            <div class="chat-list" id="chatList" role="list" aria-label="会话列表"></div>
+
+
+        <div class="sidebar-footer sidebar-footer-hint" id="sidebarFooterHint">选择智能体查看历史对话</div>
+
+
+    </aside>
+
+
+    <div class="chat-main">
+
+
+        <header class="chat-header">
+
+
+            <div class="header-title-group">
+
+
+                <h1 id="chatTitle">体系智能体</h1>
+
+
+                <button class="header-kb-btn" id="headerKbBtn" onclick="showKbPage()" title="企业内部体系文件" aria-label="企业内部体系文件" style="display:inline-flex;"><span class="kb-btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span><span class="kb-btn-text">企业内部体系文件</span></button><button class="header-kb-btn" id="headerExternalKbBtn" onclick="showExternalKbPage()" title="外部知识库" aria-label="外部知识库" style="display:none;"><span class="kb-btn-icon">🌐</span><span class="kb-btn-text">外部知识库</span></button>
+
+                <div class="skills-wrapper" id="skillsWrapper" style="display:none;"><button class="header-kb-btn" id="headerSkillsBtn" onclick="toggleSkillsDropdown(event)" title="技能" aria-label="技能" aria-haspopup="true"><span class="kb-btn-icon">🛠️</span><span class="kb-btn-text">质量工具箱Skill</span></button><div class="skills-dropdown" id="skillsDropdown" role="menu"><button onclick="selectSkill('8d-skill')" role="menuitem">📋 8D工作法（示例）</button><button onclick="selectSkill('pfmea-dfmea-skill')" role="menuitem" >📐 FMEA分析（示例）</button><button onclick="showDevSkillToast('标准条款精准检索')" role="menuitem" >📚 标准条款精准检索</button><button onclick="showDevSkillToast('文件编号匹配检查')" role="menuitem" >📄 文件编号匹配检查</button><button onclick="showDevSkillToast('海龟图生成')" role="menuitem" >🐢 海龟图生成</button><button onclick="showDevSkillToast('质量根因分析')" role="menuitem" >🔍 质量根因分析</button><button onclick="showDevSkillToast('质量成本计算')" role="menuitem" >💰 质量成本计算</button><button onclick="showDevSkillToast('甘特图规划')" role="menuitem" >📊 甘特图规划</button><button onclick="showDevSkillToast('过程能力指数Cpk/Ppk计算')" role="menuitem" >📈 过程能力指数Cpk/Ppk计算</button><button onclick="showDevSkillToast('人机料法环分析')" role="menuitem" >⚙️ 人机料法环分析</button><button onclick="showDevSkillToast('变化点识别与风险评估')" role="menuitem" >⚠️ 变化点识别与风险评估</button><button onclick="showDevSkillToast('问题描述5W2H')" role="menuitem" >📝 问题描述5W2H</button><button onclick="showDevSkillToast('原因验证与再现试验方案')" role="menuitem" >🔬 原因验证与再现试验方案</button><button onclick="showDevSkillToast('纠正与预防措施有效性')" role="menuitem" >✅ 纠正与预防措施有效性</button><button onclick="showDevSkillToast('体系差距分析')" role="menuitem" >🎯 体系差距分析</button></div></div>
+
+
+            </div>
+
+
+            <div class="header-actions">
+
+
+                <button class="header-kb-btn" id="headerHelpBtn" onclick="showHelpPage()" title="使用指南" aria-label="帮助" style="display:inline-flex;"><span class="kb-btn-icon">❓</span><span class="kb-btn-text">帮助</span></button><select class="model-select" id="modelSelect" onchange="switchModel()" title="切换模型" aria-label="选择模型"></select>
+
+
+                <div class="export-wrapper"><button class="header-btn" onclick="toggleExportDropdown()" title="导出对话" aria-label="导出对话" aria-haspopup="true">📥 导出对话</button><div class="export-dropdown" id="exportDropdown" role="menu"><button onclick="exportChat('docx')" role="menuitem">📝 Word</button><button onclick="exportChat('pdf')" role="menuitem">📄 PDF</button><button onclick="exportChat('md')" role="menuitem">📋 Markdown</button></div></div>
+
+
+                <div class="header-user-info">
+
+
+                    <div class="header-user-avatar" id="headerUserAvatar">U</div>
+
+
+                    <span class="header-user-name" id="headerUserName">用户</span>
+
+
+                    <button class="header-logout-btn" onclick="doLogout()" title="退出登录" aria-label="退出登录">⏻</button>
+
+
+                </div>
+
+
+            </div>
+
+
+        </header>
+
+
+
+
+
+        <!-- Knowledge Base Full Page View -->
+
+
+        <div class="kb-page" id="kbPage" style="display:none;">
+            <div class="kb-page-header">
+                <button class="kb-back-btn" onclick="hideKbPage()" title="返回对话" aria-label="返回对话">← 返回对话</button>
+                <div class="kb-page-title-area">
+                    <h2 id="kbPageTitle">企业内部体系文件</h2>
+                    <p id="kbPageDesc" class="kb-page-desc">管理企业体系文件，按分类查看和上传文档</p>
+                </div>
+            </div>
+            <div class="kb-page-body kb-page-body-new">
+                <div class="kb-layout">
+                    <!-- 左列：分类 -->
+                    <div class="kb-cat-col">
+                        <div class="kb-cat-panel">
+                            <div class="kb-cat-header">
+                                <span>文件分类</span>
+                                <button class="kb-cat-add-btn" onclick="addKbCategory()" title="新建分类">+</button>
+                            </div>
+                            <div class="kb-cat-list" id="kbCatList">
+                                <button class="kb-cat-item active" onclick="selectKbCategory('手册', this)">手册</button>
+                                <button class="kb-cat-item" onclick="selectKbCategory('程序文件', this)">程序文件</button>
+                                <button class="kb-cat-item" onclick="selectKbCategory('三层次文件', this)">三层次文件</button>
+                                <button class="kb-cat-item" onclick="selectKbCategory('记录表格', this)">记录表格</button>
+                                <button class="kb-cat-item" onclick="selectKbCategory('其他', this)">其他</button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 右列：文件列表 -->
+                    <div class="kb-file-col">
+                        <div class="kb-file-header">
+                            <span class="kb-file-title" id="kbFileTitle">手册</span>
+                            <button class="kb-file-upload-btn" onclick="document.getElementById('kbPageFileInput').click()">📤 上传文件</button>
+                        </div>
+                        <div class="kb-file-list" id="kbPageDocList">
+                            <div class="kb-doc-empty">暂无文件，点击右上角上传</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 统计信息 -->
+                <div class="kb-stats-row" id="kbStatsRow">
+                    <div class="kb-stat-card">
+                        <div class="kb-stat-number" id="kbStatDocCount">0</div>
+                        <div class="kb-stat-label">文档总数</div>
+                    </div>
+                    <div class="kb-stat-card">
+                        <div class="kb-stat-number" id="kbStatChunkCount">0</div>
+                        <div class="kb-stat-label">文本片段</div>
+                    </div>
+                </div>
+                <input type="file" id="kbPageFileInput" accept=".pdf,.txt,.docx,.xlsx,.xls,.doc,.png,.jpg,.jpeg,.gif,.bmp,.webp" onchange="onKbPageFileSelected(event)" style="display:none">
+                <div class="kb-upload-progress" id="kbPageProgress" style="display:none;">
+                    <div class="kb-progress-file" id="kbProgressFileName">正在上传...</div>
+                    <div class="kb-progress-bar-bg"><div class="kb-progress-bar-fill" id="kbProgressBarFill"></div></div>
+                    <div class="kb-progress-status" id="kbProgressStatus">上传中...</div>
+                </div>
+            </div>
+        </div>
+        <div class="survey-page" id="surveyPage" style="display:none;">
+            <div class="survey-header">
+                <h2>📋 体系调研表</h2>
+                <p>请填写以下企业信息，填写完毕后可一键生成体系文件</p>
+            </div>
+            <div class="survey-body">
+
+                <!-- Section 1: 基本信息 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">一、基本信息</h3>
+                    <div class="survey-field">
+                        <label>1. 公司名称 <span class="required">*</span></label>
+                        <input type="text" id="sv_company_name" placeholder="请输入公司全称">
+                    </div>
+                    <div class="survey-field">
+                        <label>2. 需要取得的证书 <span class="required">*</span></label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-item"><input type="checkbox" value="ISO9001" class="sv_cert"> ISO9001</label>
+                            <label class="checkbox-item"><input type="checkbox" value="IATF16949" class="sv_cert"> IATF16949</label>
+                            <label class="checkbox-item"><input type="checkbox" value="ISO14001" class="sv_cert"> ISO14001</label>
+                            <label class="checkbox-item"><input type="checkbox" value="ISO45001" class="sv_cert"> ISO45001</label>
+                        </div>
+                        <input type="text" id="sv_cert_other" placeholder="其他证书请填写" style="margin-top:8px;">
+                    </div>
+                </div>
+
+                <!-- Section 2: 领导层信息 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">二、领导层信息</h3>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>3. 董事长</label><input type="text" id="sv_chairman" placeholder="姓名"></div>
+                        <div class="survey-field"><label>法人代表</label><input type="text" id="sv_legal_rep" placeholder="姓名"></div>
+                    </div>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>总经理</label><input type="text" id="sv_gm" placeholder="姓名"></div>
+                        <div class="survey-field"><label>副总经理</label><input type="text" id="sv_deputy_gm" placeholder="姓名"></div>
+                    </div>
+                    <div class="survey-field"><label>4. 管理者代表姓名</label><input type="text" id="sv_mgmt_rep" placeholder="姓名"></div>
+                </div>
+
+                <!-- Section 3: 机构设置 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">三、机构设置情况</h3>
+                    <table class="survey-table" id="sv_org_table">
+                        <thead><tr><th>职能</th><th>部门名称</th><th>负责人姓名</th></tr></thead>
+                        <tbody>
+                            <tr><td>综合管理</td><td><input type="text" data-field="org_综合管理_dept"></td><td><input type="text" data-field="org_综合管理_head"></td></tr>
+                            <tr><td>研发/技术</td><td><input type="text" data-field="org_研发技术_dept"></td><td><input type="text" data-field="org_研发技术_head"></td></tr>
+                            <tr><td>采购</td><td><input type="text" data-field="org_采购_dept"></td><td><input type="text" data-field="org_采购_head"></td></tr>
+                            <tr><td>市场</td><td><input type="text" data-field="org_市场_dept"></td><td><input type="text" data-field="org_市场_head"></td></tr>
+                            <tr><td>财务</td><td><input type="text" data-field="org_财务_dept"></td><td><input type="text" data-field="org_财务_head"></td></tr>
+                            <tr><td>制造/生产</td><td><input type="text" data-field="org_制造生产_dept"></td><td><input type="text" data-field="org_制造生产_head"></td></tr>
+                            <tr><td>质量</td><td><input type="text" data-field="org_质量_dept"></td><td><input type="text" data-field="org_质量_head"></td></tr>
+                            <tr><td>其他部门</td><td><input type="text" data-field="org_其他1_dept"></td><td><input type="text" data-field="org_其他1_head"></td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Section 4: 贯标团队 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">四、贯标团队</h3>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>6. 贯标认证领导小组 - 组长</label><input type="text" id="sv_leader_group_leader" placeholder="姓名"></div>
+                        <div class="survey-field"><label>组员</label><input type="text" id="sv_leader_group_members" placeholder="多个姓名用逗号分隔"></div>
+                    </div>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>7. 贯标办主任</label><input type="text" id="sv_iso_office_head" placeholder="姓名"></div>
+                        <div class="survey-field"><label>成员</label><input type="text" id="sv_iso_office_members" placeholder="多个姓名用逗号分隔"></div>
+                    </div>
+                    <div class="survey-field"><label>8. 内审员姓名</label><input type="text" id="sv_auditors" placeholder="多个姓名用逗号分隔"></div>
+                </div>
+
+                <!-- Section 5: 产品信息 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">五、产品信息</h3>
+                    <div class="survey-field">
+                        <label>9. 体系覆盖的产品 <span class="required">*</span></label>
+                        <input type="text" id="sv_products" placeholder="证书上出现的产品名称">
+                    </div>
+                    <div class="survey-field">
+                        <label>10. 主导产品生产过程流程图</label>
+                        <textarea id="sv_process_flow" rows="3" placeholder="如：下料→倒角→翻边→弯管→打点→扩口→清洗→烘干→焊接→检漏→喷涂→包装"></textarea>
+                    </div>
+                </div>
+
+                <!-- Section 6: 公司简介 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">六、公司简介</h3>
+                    <div class="survey-field">
+                        <label>12-1. 地理位置、自然环境和交通条件</label>
+                        <textarea id="sv_location" rows="2" placeholder="描述公司地理位置及周边环境"></textarea>
+                    </div>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>占地面积（㎡）</label><input type="text" id="sv_area" placeholder="平方米"></div>
+                        <div class="survey-field"><label>建筑面积（㎡）</label><input type="text" id="sv_building_area" placeholder="平方米"></div>
+                    </div>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>正式员工（人）</label><input type="text" id="sv_staff_total" placeholder="人数"></div>
+                        <div class="survey-field"><label>管理技术人员（人）</label><input type="text" id="sv_staff_mgmt" placeholder="人数"></div>
+                        <div class="survey-field"><label>中专以上文化（人）</label><input type="text" id="sv_staff_edu" placeholder="人数"></div>
+                    </div>
+                    <div class="survey-field"><label>设备情况</label><textarea id="sv_equipment" rows="2" placeholder="主要生产设备概述"></textarea></div>
+                    <div class="survey-field"><label>主要客户</label><input type="text" id="sv_customers" placeholder="主要客户名称"></div>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>公司地址</label><input type="text" id="sv_address" placeholder="详细地址"></div>
+                        <div class="survey-field"><label>联系人</label><input type="text" id="sv_contact" placeholder="联系人姓名"></div>
+                    </div>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>电话</label><input type="text" id="sv_phone" placeholder="电话号码"></div>
+                        <div class="survey-field"><label>传真</label><input type="text" id="sv_fax" placeholder="传真号码"></div>
+                        <div class="survey-field"><label>手机</label><input type="text" id="sv_mobile" placeholder="手机号码"></div>
+                    </div>
+                </div>
+
+                <!-- Section 7: 质量方针目标 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">七、质量方针与目标</h3>
+                    <div class="survey-field"><label>13. 公司宗旨</label><textarea id="sv_purpose" rows="2" placeholder="如：勤奋 务实 诚信 创新"></textarea></div>
+                    <div class="survey-field"><label>14. 质量方针</label><textarea id="sv_quality_policy" rows="3" placeholder="公司质量方针"></textarea></div>
+                    <div class="survey-field"><label>15. 质量目标</label><textarea id="sv_quality_goal" rows="4" placeholder="产品质量目标、服务质量目标、工作质量目标等"></textarea></div>
+                </div>
+
+                <!-- Section 8: 认证计划 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">八、认证计划</h3>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>16. 计划取得认证证书日期</label><input type="date" id="sv_cert_date"></div>
+                        <div class="survey-field"><label>17. 计划审核开始时间（选填）</label><input type="date" id="sv_audit_date"></div>
+                    </div>
+                    <div class="survey-field"><label>18. 周六、周日是否休息</label>
+                        <select id="sv_rest_day"><option value="">请选择</option><option value="周六周日都休息">周六周日都休息</option><option value="仅周日休息">仅周日休息</option><option value="都不休息">都不休息</option><option value="轮休">轮休</option></select>
+                    </div>
+                    <div class="survey-field"><label>19. 有无设计开发？</label>
+                        <select id="sv_design_dev"><option value="">请选择</option><option value="有">有</option><option value="无">无</option></select>
+                    </div>
+                </div>
+
+                <!-- Section 9: 填写人信息 -->
+                <div class="survey-section">
+                    <h3 class="survey-section-title">九、填写人信息</h3>
+                    <div class="survey-row">
+                        <div class="survey-field"><label>填写人姓名 <span class="required">*</span></label><input type="text" id="sv_filler_name" placeholder="姓名"></div>
+                        <div class="survey-field"><label>填写人手机 <span class="required">*</span></label><input type="text" id="sv_filler_phone" placeholder="手机号码"></div>
+                    </div>
+                </div>
+
+                <!-- 上传相关手册 -->
+                <div class="survey-section survey-upload-section">
+                    <h3 class="survey-section-title">📎 上传相关手册（选填）</h3>
+                    <p class="survey-upload-hint">上传质量手册、体系文件等文档，AI 将自动识别并填充表单中对应的信息</p>
+                    <div class="survey-upload-zone" id="surveyUploadZone" onclick="document.getElementById('surveyFileInput').click()">
+                        <div class="survey-upload-icon">📤</div>
+                        <div class="survey-upload-text">点击上传文件</div>
+                        <div class="survey-upload-formats">支持 PDF、DOCX、DOC、TXT 格式</div>
+                    </div>
+                    <input type="file" id="surveyFileInput" accept=".pdf,.docx,.doc,.txt" style="display:none;" onchange="onSurveyFileSelected(event)">
+                    <div class="survey-upload-status" id="surveyUploadStatus" style="display:none;"></div>
+                </div>
+
+                <!-- 提交按钮 -->
+                <div class="survey-submit-area">
+                    <button class="survey-submit-btn" onclick="saveSurveyData()">✓ 填写完毕</button>
+                    <button class="survey-draft-btn" onclick="saveSurveyDraft()">💾 暂存草稿</button>
+                    <button class="survey-clear-btn" onclick="clearSurveyData()">🗑️ 清空</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="kb-page" id="helpPage" style="display:none;">
+            <div class="kb-page-header">
+                <button class="kb-back-btn" onclick="hideHelpPage()" title="返回对话" aria-label="返回对话">← 返回对话</button>
+                <div class="kb-page-title-area">
+                    <h2>使用指南</h2>
+                    <p class="kb-page-desc">体系智能体平台使用说明</p>
+                </div>
+            </div>
+            <div class="kb-page-body" style="max-width:800px; padding:40px;">
+                <div style="background:#fff; border-radius:12px; padding:32px; line-height:1.8; font-size:15px; color:#333;">
+                    <h3 style="color:#15589B; margin-bottom:16px;">欢迎使用体系智能体平台</h3>
+                    <p>本平台是面向质量管理体系的专业AI智能体工具，提供六大核心功能模块：</p>
+                    <p><strong>1. 填写体系调研：</strong>根据企业实际情况，智能引导填写体系调研表，自动生成规范化的调研报告。</p>
+                    <p><strong>2. 一键生成手册：</strong>基于调研数据，自动生成质量管理手册，涵盖体系范围、职责分工、过程方法等核心内容。</p>
+                    <p><strong>3. 一键生成程序文件：</strong>根据手册框架，自动生成各程序文件，包括文件控制、记录控制、内审、管理评审等标准程序。</p>
+                    <p><strong>4. 一键生成三层次文件：</strong>针对具体业务过程，生成作业指导书和操作规范，确保文件体系完整闭环。</p>
+                    <p><strong>5. 一键生成记录表格：</strong>自动匹配各程序文件所需的记录表单，支持下载和编辑，方便日常使用。</p>
+                    <p><strong>6. 不合格项整改：</strong>对内外审发现的不合格项进行智能归因分析，生成8D整改报告并跟踪闭环。</p>
+                    <p style="margin-top:20px; padding:12px; background:#f0f7ff; border-radius:8px; color:#15589B;"><strong>使用提示：</strong>左侧选择对应智能体后，在输入框中描述您的需求即可。支持上传文件、联网搜索和深度思考模式。企业内部体系文件可上传到对应智能体的知识库中，外部知识库提供行业标准和法规参考。</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="kb-page" id="externalKbPage" style="display:none;">
+            <div class="kb-page-header">
+                <button class="kb-back-btn" onclick="hideExternalKbPage()" title="返回对话" aria-label="返回对话">← 返回对话</button>
+                <div class="kb-page-title-area">
+                    <h2>外部知识库</h2>
+                    <p class="kb-page-desc">行业标准、法规、技术规范等外部参考资料</p>
+                </div>
+            </div>
+            <div class="kb-page-body kb-page-body-new">
+                <div class="kb-layout">
+                    <!-- 左列：分类（带下拉展开） -->
+                    <div class="kb-cat-col">
+                        <div class="kb-cat-panel">
+                            <div class="kb-cat-header">
+                                <span>文件分类</span>
+                            </div>
+                            <div class="kb-cat-list" id="extKbCatList">
+                                <!-- 体系文件 -->
+                                <div class="kb-cat-group">
+                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">体系文件 <span class="cat-arrow">▾</span></button>
+                                    <div class="kb-cat-sub-list">
+                                        <button class="kb-cat-item active" onclick="selectExtKbCategory('体系文件-手册', this)">手册</button>
+                                        <button class="kb-cat-item" onclick="selectExtKbCategory('体系文件-程序文件', this)">程序文件</button>
+                                        <button class="kb-cat-item" onclick="selectExtKbCategory('体系文件-三层次文件', this)">三层次文件</button>
+                                        <button class="kb-cat-item" onclick="selectExtKbCategory('体系文件-记录表格', this)">记录表格</button>
+                                    </div>
+                                </div>
+                                <!-- 按产品分类 -->
+                                <div class="kb-cat-group">
+                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">按产品分类 <span class="cat-arrow">▾</span></button>
+                                    <div class="kb-cat-sub-list" id="extKbProductList">
+                                        <button class="kb-cat-item" onclick="selectExtKbCategory('按产品分类-通用', this)">通用</button>
+                                    </div>
+                                    <button class="kb-cat-add-sub" onclick="addExtKbSubCategory('按产品分类')">+ 添加产品</button>
+                                </div>
+                                <!-- 按工艺分类 -->
+                                <div class="kb-cat-group">
+                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">按工艺分类 <span class="cat-arrow">▾</span></button>
+                                    <div class="kb-cat-sub-list" id="extKbProcessList">
+                                        <button class="kb-cat-item" onclick="selectExtKbCategory('按工艺分类-通用', this)">通用</button>
+                                    </div>
+                                    <button class="kb-cat-add-sub" onclick="addExtKbSubCategory('按工艺分类')">+ 添加工艺</button>
+                                </div>
+                                <!-- 其他 -->
+                                <div class="kb-cat-group">
+                                    <button class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">其他 <span class="cat-arrow">▾</span></button>
+                                    <div class="kb-cat-sub-list">
+                                        <button class="kb-cat-item" onclick="selectExtKbCategory('其他-标准及工具原文', this)">标准及工具原文</button>
+                                    </div>
+                                    <button class="kb-cat-add-sub" onclick="addExtKbSubCategory('其他')">+ 添加分类</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 右列：文件列表 -->
+                    <div class="kb-file-col">
+                        <div class="kb-file-header">
+                            <span class="kb-file-title" id="extKbFileTitle">手册</span>
+                            <button class="kb-file-upload-btn" onclick="document.getElementById('extKbFileInput').click()">上传文件</button>
+                        </div>
+                        <div class="kb-file-list" id="extKbDocList">
+                            <div class="kb-doc-empty">暂无文件，点击右上角上传</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 统计信息 -->
+                <div class="kb-stats-row">
+                    <div class="kb-stat-card">
+                        <div class="kb-stat-number" id="extKbStatDocCount">0</div>
+                        <div class="kb-stat-label">文档总数</div>
+                    </div>
+                    <div class="kb-stat-card">
+                        <div class="kb-stat-number" id="extKbStatChunkCount">0</div>
+                        <div class="kb-stat-label">文本片段</div>
+                    </div>
+                </div>
+                <input type="file" id="extKbFileInput" accept=".pdf,.txt,.docx,.xlsx,.xls,.doc,.png,.jpg,.jpeg,.gif,.bmp,.webp" onchange="onExtKbFileSelected(event)" style="display:none">
+            </div>
+        </div>
+
+        <div class="chat-content centered" id="chatContent">
+
+
+            <div class="welcome-center" id="welcomeCenter"><h2>体系智能体</h2><p>专业模具AI智能体，独立赋能研发与质量管理</p><div class="quick-actions"></div></div>
+
+
+            <div class="chat-messages" id="chatMessages" role="log" aria-label="对话消息" aria-live="polite"></div>
+
+
+            <button class="scroll-bottom-btn" id="scrollBottomBtn" onclick="scrollToBottom()" title="滚动到底部" aria-label="滚动到底部">↓</button>
+
+
+            <div class="typing-indicator" id="typingIndicator" aria-hidden="true"><div style="display:flex;align-items:center;gap:12px;"><div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div></div></div>
+
+
+            <div class="chat-input-area"><div class="input-container"><div class="file-bar" id="fileBar"><span id="fileIcon">📎</span><span class="file-name" id="fileName"></span><span class="remove-file" onclick="removeFile()" role="button" aria-label="移除文件">✕</span></div><div class="agent-kb-bar" id="agentKbBar" style="display:none;">
+
+
+                    <span class="kb-bar-icon">📚</span>
+
+
+                    <span class="kb-bar-text">知识库上传模式</span>
+
+
+                    <span class="kb-bar-hint">下一个文件将上传到当前智能体的专属知识库</span>
+
+
+                    <span class="kb-bar-remove" onclick="toggleAgentKbUpload()" role="button" aria-label="关闭">✕</span>
+
+
+                </div>
+
+
+                <div class="agent-kb-bar" id="skillModeBar" style="display:none; background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.3);">
+
+
+                    <span class="kb-bar-icon">📋</span>
+
+
+                    <span class="kb-bar-text" id="skillModeText">8D SKILL模式</span>
+
+
+                    <span class="kb-bar-hint" id="skillModeHint">当前启用了8D技能，AI将按8D流程生成报告</span>
+
+
+                    <span class="kb-bar-remove" onclick="clearSkill()" role="button" aria-label="关闭">✕</span>
+
+
+                </div>
+
+
+            <div class="input-top"><textarea id="msgInput" rows="1" placeholder="输入问题，或粘贴/拖拽文件..." onkeydown="handleKey(event)" oninput="autoResize(this)" aria-label="输入消息"></textarea><div class="send-btn-wrap"><button class="icon-btn send" id="sendBtn" onclick="sendMessage()" title="发送" aria-label="发送消息">➤</button><button class="icon-btn stop" id="stopBtn" onclick="stopGeneration()" title="停止生成" style="display:none;" aria-label="停止生成">■</button></div></div><div class="input-toolbar"><button class="toolbar-btn file-upload-btn" onclick="document.getElementById('fileInput').click()" title="上传文件或图片" aria-label="上传文件">+</button><button class="toolbar-btn kb-upload-btn" id="kbUploadToggle" onclick="toggleAgentKbUpload()" title="上传到智能体知识库" aria-label="上传到知识库">📚</button><button class="web-search-toggle" id="webSearchToggle" onclick="toggleWebSearch()" title="开启/关闭联网搜索" aria-label="联网搜索" aria-pressed="false"><span class="toggle-icon">🌐</span><span class="toggle-label">联网搜索</span></button><button class="deep-think-toggle" id="deepThinkToggle" onclick="toggleDeepThink()" title="开启/关闭深度思考" aria-label="深度思考" aria-pressed="false"><span class="toggle-icon">🧠</span><span class="toggle-label">深度思考</span></button></div></div></div>
+
+
+        </div>
+
+
+        <input type="file" id="fileInput" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.gif,.bmp,.webp,.csv,.xlsx,.xls,.doc,.ppt,.pptx,.md,.json,.py,.js,.html,.css" onchange="onFileSelected(event)" aria-hidden="true">
+
+
+    </div>
+
+
+</div>
+
+
+
+
+
+
+
+
+<!-- Knowledge Base Modal -->
+
+
+<div class="modal-overlay" id="docsModal" role="dialog" aria-label="知识库管理" aria-modal="true">
+
+
+    <div class="modal"><h3>知识库管理</h3><div class="upload-section" id="uploadZone" onclick="document.getElementById('kbFileInput').click()" role="button" aria-label="上传文档"><div class="upload-icon">📤</div><div class="upload-text">点击或拖拽文件到此处 <strong>上传到知识库</strong></div><div class="upload-hint">支持 PDF、TXT、DOCX、图片(PNG/JPG等) 格式</div></div><input type="file" id="kbFileInput" accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.gif,.bmp,.webp" onchange="onKbFileSelected(event)" multiple aria-hidden="true"><div class="upload-progress" id="uploadProgress" role="progressbar"><div class="progress-file" id="progressFileName">正在上传...</div><div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBarFill"></div></div><div class="progress-status" id="progressStatus">上传中...</div></div><div class="divider">已索引文档</div><div class="doc-list" id="docList" role="list"><div class="doc-empty">加载中...</div></div><button class="btn btn-primary close-btn" onclick="closeDocs()" aria-label="关闭">关闭</button></div>
+
+
+</div>
+
+
+
+
+
+<!-- Rename Overlay -->
+
+
+<div class="rename-overlay" id="renameOverlay" role="dialog" aria-label="重命名对话" aria-modal="true">
+
+
+    <div class="rename-card"><h3>重命名对话</h3><input type="text" id="renameInput" placeholder="输入新名称" onkeydown="if(event.key==='Enter')confirmRename()" aria-label="新名称"><div class="rename-btns"><button class="cancel-btn" onclick="cancelRename()" aria-label="取消">取消</button><button class="confirm-btn" onclick="confirmRename()" aria-label="确认重命名">确认</button></div></div>
+
+
+</div>
+
+
+
+
+
+<script>
+
+
+if ('serviceWorker' in navigator) {
+
+
+    window.addEventListener('load', function() {
+
+
+        navigator.serviceWorker.register('/static/sw.js').then(function(reg) {
+
+
+            console.log('SW registered:', reg.scope);
+
+
+            reg.addEventListener('updatefound', function() {
+
+
+                var newWorker = reg.installing;
+
+
+                newWorker.addEventListener('statechange', function() {
+
+
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) { console.log('New SW available'); }
+
+
+                });
+
+
+            });
+
+
+        }).catch(function(err) { console.warn('SW registration failed:', err); });
+
+
+    });
+
+
+}
+
+
+let deferredPrompt = null;
+
+
+window.addEventListener('beforeinstallprompt', function(e) {
+
+
+    e.preventDefault(); deferredPrompt = e;
+
+
+    var installBtn = document.getElementById('pwaInstallBtn');
+
+
+    if (installBtn) installBtn.style.display = 'flex';
+
+
+});
+
+
+function installPWA() {
+
+
+    if (!deferredPrompt) return;
+
+
+    deferredPrompt.prompt();
+
+
+    deferredPrompt.userChoice.then(function(choice) {
+
+
+        if (choice.outcome === 'accepted') showToast('ForgeAgent 已添加到桌面');
+
+
+        deferredPrompt = null;
+
+
+        var installBtn = document.getElementById('pwaInstallBtn');
+
+
+        if (installBtn) installBtn.style.display = 'none';
+
+
+    });
+
+
+}
+
+
+</script>
+
+
+<script>
+
+
+function toggleFaq(el) {
+
+
+    const isActive = el.classList.contains('active');
+
+
+    document.querySelectorAll('.lp-faq-item').forEach(function(item) { item.classList.remove('active'); });
+
+
+    if (!isActive) el.classList.add('active');
+
+
+}
+
+
+</script>
+
+
+<script src="/static/js/app.js?v=20260614k"></script>
+
+
+</body>
+
+
+</html>

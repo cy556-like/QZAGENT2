@@ -1,0 +1,8 @@
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting reportlab
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/a7/45/ea7fad10122440de6e845568d106bffdc456ca0e8a1d8ae10b46016087e4/reportlab-4.5.1-py3-none-any.whl (2.0 MB)
+     ---------------------------------------- 2.0/2.0 MB 20.9 MB/s eta 0:00:00
+Requirement already satisfied: pillow>=9.0.0 in c:\program files\python311\lib\site-packages (from reportlab) (12.2.0)
+Requirement already satisfied: charset-normalizer in c:\program files\python311\lib\site-packages (from reportlab) (3.4.7)
+Installing collected packages: reportlab
+Successfully installed reportlab-4.5.1
