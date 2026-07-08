@@ -3896,7 +3896,7 @@ function selectKbSubcategory(sub, btnEl) {
 
 async function addKbCategory() {
     console.log('[KB] addKbCategory 被调用, currentAgentId=', currentAgentId);
-    const name = prompt('请输入新分类名称：');
+    let name = prompt('请输入新分类名称：');
     console.log('[KB] prompt 返回:', name);
     if (!name || !name.trim()) return;
     name = name.trim();
@@ -4038,7 +4038,7 @@ async function addKbSubcategory() {
         showToast('请先在左侧选择一个分类', 3000);
         return;
     }
-    const name = prompt('请输入新子目录名称：');
+    let name = prompt('请输入新子目录名称：');
     console.log('[KB] prompt 返回:', name);
     if (!name || !name.trim()) return;
     name = name.trim();
