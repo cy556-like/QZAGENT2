@@ -1468,6 +1468,21 @@ async def get_document_stats(
 
 # ===== 二级子目录管理 API（三列布局用）=====
 
+@router.get("/kb/categories", summary="列出所有一级分类")
+async def list_categories_api(
+    agent_id: str = Query(..., description="智能体ID"),
+    username: str = Depends(require_auth),
+):
+    """列出指定智能体下所有一级分类名（从磁盘+ChromaDB+关键词索引合并）"""
+    from app.rag.document import list_categories
+    try:
+        cats = await asyncio.to_thread(list_categories, agent_id)
+        return {"success": True, "categories": cats}
+    except Exception as e:
+        logger.exception(f"列出分类失败: {e}")
+        return {"success": True, "categories": ['手册', '程序文件', '三层次文件', '记录表格', '其他']}
+
+
 @router.get("/kb/subcategories", summary="列出某一级分类下的二级子目录")
 async def list_subcategories_api(
     agent_id: str = Query(..., description="智能体ID"),

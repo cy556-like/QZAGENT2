@@ -3818,9 +3818,67 @@ function hideExternalKbPage() {
 }
 
 // ===== 知识库分类管理（三列布局）=====
-let currentKbCategory = '手册';
+let currentKbCategory = '';
 let currentKbSubcategory = null;
-let kbCategories = ['手册', '程序文件', '三层次文件', '记录表格', '其他'];
+let kbCategories = [];
+
+// 从后端加载一级分类列表并渲染到第一列
+async function loadKbCategories() {
+    const listEl = document.getElementById('kbCatList');
+    if (!listEl) return;
+    if (!currentAgentId) {
+        listEl.innerHTML = '<div class="kb-doc-empty">请先选择智能体</div>';
+        return;
+    }
+    listEl.innerHTML = '<div class="kb-doc-empty">加载中...</div>';
+    try {
+        const url = '/api/v1/kb/categories?agent_id=' + encodeURIComponent(currentAgentId);
+        const resp = await fetch(url, { headers: apiHeaders() });
+        const data = await resp.json();
+        const cats = data.categories || [];
+        kbCategories = cats;
+        if (cats.length === 0) {
+            listEl.innerHTML = '<div class="kb-doc-empty">暂无分类，点击右上角 + 新建</div>';
+            return;
+        }
+        let html = '';
+        cats.forEach(cat => {
+            const safeCat = escapeHtml(cat);
+            const jsCat = cat.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            html += '<button class="kb-cat-item" onclick="selectKbCategory(\'' + jsCat + '\', this)">' +
+                '<span class="kb-cat-name">' + safeCat + '</span>' +
+                '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
+                    '<span class="kb-cat-edit" onclick="renameKbCategory(\'' + jsCat + '\', event)" title="重命名">✎</span>' +
+                    '<span class="kb-cat-del" onclick="delKbCategory(\'' + jsCat + '\', event)" title="删除">×</span>' +
+                '</span>' +
+            '</button>';
+        });
+        listEl.innerHTML = html;
+    } catch (e) {
+        console.error('[KB] 加载分类失败:', e);
+        listEl.innerHTML = '<div class="kb-doc-empty">加载失败，请重试</div>';
+    }
+}
+
+// 渲染单个分类按钮到第一列（供 addKbCategory 调用，避免重复代码）
+function appendKbCategoryButton(name) {
+    const catList = document.getElementById('kbCatList');
+    if (!catList) return;
+    // 移除"暂无分类"提示
+    const emptyEl = catList.querySelector('.kb-doc-empty');
+    if (emptyEl) emptyEl.remove();
+    const safeName = escapeHtml(name);
+    const jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    const btn = document.createElement('button');
+    btn.className = 'kb-cat-item';
+    btn.innerHTML = '<span class="kb-cat-name">' + safeName + '</span>' +
+        '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
+            '<span class="kb-cat-edit" onclick="renameKbCategory(\'' + jsName + '\', event)" title="重命名">✎</span>' +
+            '<span class="kb-cat-del" onclick="delKbCategory(\'' + jsName + '\', event)" title="删除">×</span>' +
+        '</span>';
+    btn.onclick = function() { selectKbCategory(name, this); };
+    catList.appendChild(btn);
+}
 
 function selectKbCategory(cat, btnEl) {
     currentKbCategory = cat;
@@ -3919,20 +3977,7 @@ async function addKbCategory() {
             return;
         }
         // 在 DOM 中添加新按钮
-        const catList = document.getElementById('kbCatList');
-        if (catList) {
-            const safeName = escapeHtml(name);
-            const jsName = name.replace(/'/g, "\\'");
-            const btn = document.createElement('button');
-            btn.className = 'kb-cat-item';
-            btn.innerHTML = '<span class="kb-cat-name">' + safeName + '</span>' +
-                '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
-                    '<span class="kb-cat-edit" onclick="renameKbCategory(\'' + jsName + '\', event)" title="重命名">✎</span>' +
-                    '<span class="kb-cat-del" onclick="delKbCategory(\'' + jsName + '\', event)" title="删除">×</span>' +
-                '</span>';
-            btn.onclick = function() { selectKbCategory(name, this); };
-            catList.appendChild(btn);
-        }
+        appendKbCategoryButton(name);
         kbCategories.push(name);
         showToast('已添加分类：' + name, 2000);
     } catch (e) {
@@ -3959,11 +4004,8 @@ async function delKbCategory(name, event) {
             return;
         }
         kbCategories = kbCategories.filter(c => c !== name);
-        // 从 DOM 移除
-        document.querySelectorAll('#kbCatList .kb-cat-item').forEach(btn => {
-            const nameEl = btn.querySelector('.kb-cat-name');
-            if (nameEl && nameEl.textContent === name) btn.remove();
-        });
+        // 重新加载第一列分类列表（从后端获取最新状态）
+        await loadKbCategories();
         // 如果删除的是当前选中的，切换到第一个
         if (currentKbCategory === name) {
             const firstBtn = document.querySelector('#kbCatList .kb-cat-item');
@@ -3973,8 +4015,13 @@ async function delKbCategory(name, event) {
             } else {
                 currentKbCategory = '';
                 currentKbSubcategory = null;
+                document.getElementById('kbSubcatTitle').textContent = '请先选择左侧分类';
+                document.getElementById('kbSubcatAddBtn').style.display = 'none';
                 document.getElementById('kbSubcatList').innerHTML = '<div class="kb-doc-empty">请先在左侧选择一个分类</div>';
+                document.getElementById('kbFileTitle').textContent = '请先选择分类和子目录';
                 document.getElementById('kbPageDocList').innerHTML = '<div class="kb-doc-empty">请先选择分类和子目录</div>';
+                const uploadBtn = document.getElementById('kbFileUploadBtn');
+                if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.style.opacity = '0.5'; uploadBtn.style.cursor = 'not-allowed'; }
             }
         }
         showToast('已删除分类：' + name, 2000);
@@ -4001,26 +4048,18 @@ async function renameKbCategory(oldName, event) {
             showToast('重命名失败：' + (data.detail || data.message || '未知错误'), 3000);
             return;
         }
-        // 更新 kbCategories 数组
-        const idx = kbCategories.indexOf(oldName);
-        if (idx >= 0) kbCategories[idx] = newName.trim();
-        // 更新 DOM
-        document.querySelectorAll('#kbCatList .kb-cat-item').forEach(btn => {
-            const nameEl = btn.querySelector('.kb-cat-name');
-            if (nameEl && nameEl.textContent === oldName) {
-                nameEl.textContent = newName.trim();
-                // 更新 onclick 引用
-                btn.setAttribute('onclick', "selectKbCategory('" + newName.trim().replace(/'/g, "\\'") + "', this)");
-                const editBtn = btn.querySelector('.kb-cat-edit');
-                const delBtn = btn.querySelector('.kb-cat-del');
-                if (editBtn) editBtn.setAttribute('onclick', "renameKbCategory('" + newName.trim().replace(/'/g, "\\'") + "', event)");
-                if (delBtn) delBtn.setAttribute('onclick', "delKbCategory('" + newName.trim().replace(/'/g, "\\'") + "', event)");
-            }
-        });
-        if (currentKbCategory === oldName) {
+        // 重新加载第一列分类列表（从后端获取最新状态，避免 DOM 手工更新遗漏）
+        const wasCurrent = currentKbCategory === oldName;
+        await loadKbCategories();
+        if (wasCurrent) {
             currentKbCategory = newName.trim();
-            const subcatTitleEl = document.getElementById('kbSubcatTitle');
-            if (subcatTitleEl) subcatTitleEl.textContent = currentKbCategory + ' 的子目录';
+            // 重新选中重命名后的分类
+            document.querySelectorAll('#kbCatList .kb-cat-item').forEach(btn => {
+                const nameEl = btn.querySelector('.kb-cat-name');
+                if (nameEl && nameEl.textContent === newName.trim()) {
+                    selectKbCategory(newName.trim(), btn);
+                }
+            });
         }
         showToast('已重命名：' + oldName + ' → ' + newName.trim(), 2000);
     } catch (e) {
@@ -4150,22 +4189,25 @@ function showKbPage() {
     document.getElementById('kbPageDesc').textContent = '上传和管理' + agentName + '相关文档，系统将自动进行向量化处理';
     // [BUG FIX] 推入历史状态，让浏览器←按钮能回到聊天页
     history.pushState({page: 'kb'}, '');
-    // 进入知识库时，主动选中第一列的第一个分类（触发完整联动）
-    const firstCatBtn = document.querySelector('#kbCatList .kb-cat-item');
-    if (firstCatBtn) {
-        const firstName = firstCatBtn.querySelector('.kb-cat-name') ?
-            firstCatBtn.querySelector('.kb-cat-name').textContent : firstCatBtn.textContent.trim();
-        selectKbCategory(firstName, firstCatBtn);
-    } else {
-        // 没有分类，显示空状态
-        currentKbCategory = '';
-        currentKbSubcategory = null;
-        document.getElementById('kbSubcatTitle').textContent = '请先创建分类';
-        document.getElementById('kbSubcatAddBtn').style.display = 'none';
-        document.getElementById('kbSubcatList').innerHTML = '<div class="kb-doc-empty">请先在左侧创建分类</div>';
-        document.getElementById('kbFileTitle').textContent = '请先选择分类和子目录';
-        document.getElementById('kbPageDocList').innerHTML = '<div class="kb-doc-empty">请先选择分类和子目录</div>';
-    }
+    // 进入知识库时，先从后端加载第一列分类列表，再选中第一个分类（触发完整联动）
+    (async () => {
+        await loadKbCategories();
+        const firstCatBtn = document.querySelector('#kbCatList .kb-cat-item');
+        if (firstCatBtn) {
+            const firstName = firstCatBtn.querySelector('.kb-cat-name') ?
+                firstCatBtn.querySelector('.kb-cat-name').textContent : firstCatBtn.textContent.trim();
+            selectKbCategory(firstName, firstCatBtn);
+        } else {
+            // 没有分类，显示空状态
+            currentKbCategory = '';
+            currentKbSubcategory = null;
+            document.getElementById('kbSubcatTitle').textContent = '请先创建分类';
+            document.getElementById('kbSubcatAddBtn').style.display = 'none';
+            document.getElementById('kbSubcatList').innerHTML = '<div class="kb-doc-empty">请先在左侧创建分类</div>';
+            document.getElementById('kbFileTitle').textContent = '请先选择分类和子目录';
+            document.getElementById('kbPageDocList').innerHTML = '<div class="kb-doc-empty">请先选择分类和子目录</div>';
+        }
+    })();
     // Setup drag and drop
     setupKbPageDragDrop();
 }

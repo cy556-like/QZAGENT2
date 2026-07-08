@@ -2867,6 +2867,55 @@ def list_indexed_documents(agent_id: str = None, category: str = None, subcatego
     return sorted(list(sources))
 
 
+def list_categories(agent_id: str) -> list[str]:
+    """列出某智能体下所有一级分类名（按 agent_id 隔离）
+
+    数据源（合并去重）：
+    1. 磁盘扫描：data/documents/agent_{agent_id}/ 下的所有子文件夹
+    2. ChromaDB metadata：所有该 agent 文档的 distinct category
+    3. 关键词索引：所有该 agent 文档的 distinct category
+
+    合并三者，确保空分类目录也能显示（用户刚创建还没传文件的分类）。
+    如果完全没有分类，返回默认的 5 个初始分类（手册/程序文件/三层次文件/记录表格/其他）。
+    """
+    if not agent_id:
+        return []
+
+    cats = set()
+
+    # 1. 磁盘扫描（支持空目录）
+    agent_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}")
+    if os.path.exists(agent_dir) and os.path.isdir(agent_dir):
+        for item in os.listdir(agent_dir):
+            item_path = os.path.join(agent_dir, item)
+            if os.path.isdir(item_path):
+                cats.add(item)
+
+    # 2. ChromaDB metadata
+    vector_store = get_vector_store(agent_id=agent_id)
+    if vector_store is not None:
+        try:
+            collection = vector_store._collection
+            all_docs = collection.get(include=["metadatas"])
+            for meta in all_docs["metadatas"]:
+                if meta and meta.get("category"):
+                    cats.add(meta["category"])
+        except Exception:
+            pass
+
+    # 3. 关键词索引
+    keyword_docs = _load_keyword_index(agent_id)
+    for entry in keyword_docs:
+        if entry.get("category"):
+            cats.add(entry["category"])
+
+    result = sorted(list(cats))
+    # 如果完全没有分类，返回默认的 5 个初始分类
+    if not result:
+        return ['手册', '程序文件', '三层次文件', '记录表格', '其他']
+    return result
+
+
 def list_subcategories(agent_id: str, category: str) -> list[str]:
     """列出某一级分类下的所有二级子目录名（按 agent_id 隔离）
 
