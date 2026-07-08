@@ -3064,6 +3064,15 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
         "--output-dir", export_dir,
     ]
 
+    # 注入 LLM 配置到子进程环境变量（让 SCskill 脚本调用 LLM 做智能修改）
+    child_env = os.environ.copy()
+    child_env['LLM_API_KEY'] = getattr(settings, 'LLM_API_KEY', '') or os.environ.get('LLM_API_KEY', '')
+    child_env['LLM_BASE_URL'] = getattr(settings, 'LLM_BASE_URL', '') or os.environ.get('LLM_BASE_URL', '')
+    child_env['LLM_MODEL'] = get_current_model() or getattr(settings, 'LLM_MODEL', 'glm-5.2')
+    child_env['LLM_API_KEY_BACKUP'] = getattr(settings, 'LLM_API_KEY_BACKUP', '')
+    child_env['LLM_BASE_URL_BACKUP'] = getattr(settings, 'LLM_BASE_URL_BACKUP', '')
+    logger.info(f"[SCskill] LLM 配置: model={child_env['LLM_MODEL']}, base_url={child_env['LLM_BASE_URL'][:40]}..., has_key={bool(child_env['LLM_API_KEY'])}")
+
     logger.info(f"[SCskill] 生成质量手册: user={username}")
 
     try:
@@ -3071,10 +3080,11 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             cmd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=180,  # AI 调用需要更长时间
             encoding='utf-8',
             errors='replace',
             cwd=project_root,
+            env=child_env,
         )
 
         if result.returncode != 0:
