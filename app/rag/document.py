@@ -171,13 +171,19 @@ def _add_chunks_to_keyword_index(chunks: list, filename: str, agent_id: str = No
     # 先删除该文档的旧条目（避免重复）
     index_data = [entry for entry in index_data if entry.get("source_file") != filename]
 
-    # 添加新条目
+    # 添加新条目（含 category/subcategory 元数据，便于按分类过滤）
     for chunk in chunks:
-        index_data.append({
+        entry = {
             "content": chunk.page_content,
             "source_file": filename,
             "chunk_index": chunk.metadata.get("chunk_index", 0),
-        })
+        }
+        # 透传 metadata 里的 category / subcategory
+        if chunk.metadata.get("category"):
+            entry["category"] = chunk.metadata.get("category")
+        if chunk.metadata.get("subcategory"):
+            entry["subcategory"] = chunk.metadata.get("subcategory")
+        index_data.append(entry)
 
     _save_keyword_index(index_data, agent_id)
     # [性能优化 1] BM25 缓存失效：索引变更后清除缓存
@@ -1560,7 +1566,7 @@ def split_documents(docs: list, chunk_size: int = 800, chunk_overlap: int = 200,
     return clean_chunks
 
 
-def index_document(file_path: str, filename: str = None, agent_id: str = None, category: str = None) -> dict:
+def index_document(file_path: str, filename: str = None, agent_id: str = None, category: str = None, subcategory: str = None) -> dict:
     """
     完整的文档索引流程：加载 → 分块 → 索引存储
 
@@ -1589,6 +1595,8 @@ def index_document(file_path: str, filename: str = None, agent_id: str = None, c
         doc.metadata["source_file"] = filename
         if category:
             doc.metadata["category"] = category
+        if subcategory:
+            doc.metadata["subcategory"] = subcategory
 
     # 3. 分块（传入 filename，MD 文件自动使用标题层级切片）
     chunks = split_documents(docs, filename=filename)
@@ -2766,18 +2774,19 @@ def get_document_content(filename: str, agent_id: str = None) -> dict:
         }
 
 
-def list_indexed_documents(agent_id: str = None, category: str = None) -> list[str]:
+def list_indexed_documents(agent_id: str = None, category: str = None, subcategory: str = None) -> list[str]:
     """列出知识库中所有已索引的文档（按 agent_id 隔离）
 
     [#11] 同时检查向量索引、关键词索引和磁盘文件，合并结果
-    
+
     三重数据源合并策略：
     1. ChromaDB 向量索引 - 已成功向量化的文档
     2. 关键词索引 - 因 Embedding 不可用而降级为关键词索引的文档
     3. 磁盘文件扫描 - 兜底：确保即使索引丢失，文件仍然可见
-    
-    这保证了前端知识库面板、智能体搜索工具、API 列表接口三者看到一致的文档列表。
-    
+
+    支持两级目录过滤：category（一级）+ subcategory（二级）
+    若指定 subcategory，则必须同时指定 category
+
     注意：普通聊天模式（agent_id=None）没有知识库，返回空列表
     """
     # 普通聊天模式：无知识库
@@ -2796,10 +2805,13 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
                 if meta and "source_file" in meta:
                     # 按 category 过滤
                     if category:
-                        if meta.get("category") == category:
-                            sources.add(meta["source_file"])
-                    else:
-                        sources.add(meta["source_file"])
+                        if meta.get("category") != category:
+                            continue
+                        # 再按 subcategory 过滤
+                        if subcategory:
+                            if meta.get("subcategory") != subcategory:
+                                continue
+                    sources.add(meta["source_file"])
         except Exception:
             pass
 
@@ -2808,14 +2820,20 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
     for entry in keyword_docs:
         if entry.get("source_file"):
             if category:
-                if entry.get("category") == category:
-                    sources.add(entry["source_file"])
-            else:
-                sources.add(entry["source_file"])
+                if entry.get("category") != category:
+                    continue
+                if subcategory:
+                    if entry.get("subcategory") != subcategory:
+                        continue
+            sources.add(entry["source_file"])
 
     # 3. 磁盘文件扫描（兜底：确保文件存在但索引丢失时仍可见）
     if agent_id == "__external__":
         scan_dir = os.path.join(settings.DOCUMENTS_DIR, "external_kb")
+        if category and os.path.exists(scan_dir):
+            scan_dir = os.path.join(scan_dir, category)
+        if subcategory and os.path.exists(scan_dir):
+            scan_dir = os.path.join(scan_dir, subcategory)
         if os.path.exists(scan_dir):
             for fname in os.listdir(scan_dir):
                 ext = os.path.splitext(fname)[1].lower()
@@ -2825,31 +2843,17 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
                         sources.add(fname)
     elif agent_id:
         scan_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}")
+        if category and os.path.exists(scan_dir):
+            scan_dir = os.path.join(scan_dir, category)
+        if subcategory and os.path.exists(scan_dir):
+            scan_dir = os.path.join(scan_dir, subcategory)
         if os.path.exists(scan_dir):
-            for item in os.listdir(scan_dir):
-                item_path = os.path.join(scan_dir, item)
-                if os.path.isfile(item_path):
-                    ext = os.path.splitext(item)[1].lower()
-                    if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
-                        sources.add(item)
-                elif os.path.isdir(item_path):
-                    # 分类子目录：如果指定了 category，只扫该分类
-                    if category:
-                        if item == category:
-                            for fname in os.listdir(item_path):
-                                ext = os.path.splitext(fname)[1].lower()
-                                if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
-                                    file_path = os.path.join(item_path, fname)
-                                    if os.path.isfile(file_path):
-                                        sources.add(fname)
-                    else:
-                        # 没指定 category，扫所有分类
-                        for fname in os.listdir(item_path):
-                            ext = os.path.splitext(fname)[1].lower()
-                            if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
-                                file_path = os.path.join(item_path, fname)
-                                if os.path.isfile(file_path):
-                                    sources.add(fname)
+            for fname in os.listdir(scan_dir):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                    file_path = os.path.join(scan_dir, fname)
+                    if os.path.isfile(file_path):
+                        sources.add(fname)
     else:
         scan_dir = settings.DOCUMENTS_DIR
         if os.path.exists(scan_dir):
@@ -2861,6 +2865,154 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
                         sources.add(fname)
 
     return sorted(list(sources))
+
+
+def list_subcategories(agent_id: str, category: str) -> list[str]:
+    """列出某一级分类下的所有二级子目录名（按 agent_id 隔离）
+
+    数据源：
+    1. 磁盘扫描：data/documents/agent_{agent_id}/{category}/ 下的子文件夹
+    2. ChromaDB metadata：所有该 category 下文档的 distinct subcategory
+    3. 关键词索引：所有该 category 下文档的 distinct subcategory
+
+    合并三者，确保空目录也能显示（用户刚创建还没传文件的子目录）。
+    """
+    if not agent_id or not category:
+        return []
+
+    subcats = set()
+
+    # 1. 磁盘扫描（支持空目录）
+    cat_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    if os.path.exists(cat_dir) and os.path.isdir(cat_dir):
+        for item in os.listdir(cat_dir):
+            item_path = os.path.join(cat_dir, item)
+            if os.path.isdir(item_path):
+                subcats.add(item)
+
+    # 2. ChromaDB metadata
+    vector_store = get_vector_store(agent_id=agent_id)
+    if vector_store is not None:
+        try:
+            collection = vector_store._collection
+            all_docs = collection.get(include=["metadatas"])
+            for meta in all_docs["metadatas"]:
+                if meta and meta.get("category") == category and meta.get("subcategory"):
+                    subcats.add(meta["subcategory"])
+        except Exception:
+            pass
+
+    # 3. 关键词索引
+    keyword_docs = _load_keyword_index(agent_id)
+    for entry in keyword_docs:
+        if entry.get("category") == category and entry.get("subcategory"):
+            subcats.add(entry["subcategory"])
+
+    return sorted(list(subcats))
+
+
+def rename_subcategory(agent_id: str, category: str, old_sub: str, new_sub: str) -> dict:
+    """重命名二级子目录：
+    1. 重命名磁盘文件夹
+    2. 更新 ChromaDB metadata
+    3. 更新关键词索引
+    """
+    if not agent_id or not category or not old_sub or not new_sub:
+        return {"status": "error", "message": "参数不完整"}
+    new_sub = new_sub.strip()
+    if not new_sub:
+        return {"status": "error", "message": "新名称不能为空"}
+
+    base_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    old_dir = os.path.join(base_dir, old_sub)
+    new_dir = os.path.join(base_dir, new_sub)
+
+    # 检查目标是否已存在
+    if os.path.exists(new_dir):
+        return {"status": "error", "message": f"子目录「{new_sub}」已存在"}
+
+    # 1. 重命名磁盘文件夹
+    if os.path.exists(old_dir):
+        os.rename(old_dir, new_dir)
+
+    # 2. 更新 ChromaDB metadata
+    vector_store = get_vector_store(agent_id=agent_id)
+    if vector_store is not None:
+        try:
+            collection = vector_store._collection
+            all_docs = collection.get(include=["metadatas"])
+            for i, meta in enumerate(all_docs["metadatas"]):
+                if meta and meta.get("category") == category and meta.get("subcategory") == old_sub:
+                    # 更新 metadata（ChromaDB 需要 update）
+                    doc_id = all_docs["ids"][i]
+                    new_meta = dict(meta)
+                    new_meta["subcategory"] = new_sub
+                    collection.update(ids=[doc_id], metadatas=[new_meta])
+        except Exception as e:
+            logger.warning(f"更新 ChromaDB subcategory 失败: {e}")
+
+    # 3. 更新关键词索引
+    keyword_docs = _load_keyword_index(agent_id)
+    updated = False
+    for entry in keyword_docs:
+        if entry.get("category") == category and entry.get("subcategory") == old_sub:
+            entry["subcategory"] = new_sub
+            updated = True
+    if updated:
+        _save_keyword_index(keyword_docs, agent_id)
+
+    return {"status": "success", "message": f"已重命名「{old_sub}」→「{new_sub}」"}
+
+
+def delete_subcategory(agent_id: str, category: str, subcategory: str) -> dict:
+    """删除二级子目录：
+    1. 删除磁盘文件夹及其下所有文件
+    2. 从 ChromaDB 删除该 subcategory 下的所有文档
+    3. 从关键词索引删除
+    """
+    if not agent_id or not category or not subcategory:
+        return {"status": "error", "message": "参数不完整"}
+
+    base_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    sub_dir = os.path.join(base_dir, subcategory)
+
+    # 1. 收集要删除的文件名
+    files_to_delete = []
+    if os.path.exists(sub_dir):
+        for fname in os.listdir(sub_dir):
+            file_path = os.path.join(sub_dir, fname)
+            if os.path.isfile(file_path):
+                files_to_delete.append(fname)
+
+    # 2. 从 ChromaDB 删除（按 metadata 过滤）
+    vector_store = get_vector_store(agent_id=agent_id)
+    if vector_store is not None:
+        try:
+            collection = vector_store._collection
+            all_docs = collection.get(include=["metadatas"])
+            ids_to_delete = []
+            for i, meta in enumerate(all_docs["metadatas"]):
+                if meta and meta.get("category") == category and meta.get("subcategory") == subcategory:
+                    ids_to_delete.append(all_docs["ids"][i])
+            if ids_to_delete:
+                collection.delete(ids=ids_to_delete)
+        except Exception as e:
+            logger.warning(f"从 ChromaDB 删除子目录文档失败: {e}")
+
+    # 3. 从关键词索引删除
+    keyword_docs = _load_keyword_index(agent_id)
+    new_keyword_docs = [e for e in keyword_docs
+                        if not (e.get("category") == category and e.get("subcategory") == subcategory)]
+    if len(new_keyword_docs) != len(keyword_docs):
+        _save_keyword_index(new_keyword_docs, agent_id)
+        _bm25_cache_invalidation(agent_id)
+
+    # 4. 删除磁盘文件夹
+    if os.path.exists(sub_dir):
+        import shutil
+        shutil.rmtree(sub_dir, ignore_errors=True)
+
+    return {"status": "success", "message": f"已删除子目录「{subcategory}」及其下 {len(files_to_delete)} 个文件"}
 
 
 def update_document(filename: str, new_content: str, agent_id: str = None, async_reindex: bool = False) -> dict:
@@ -3053,12 +3205,18 @@ def delete_document(filename: str, agent_id: str = None) -> dict:
     if agent_id:
         agent_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}")
         possible_paths.append(os.path.join(agent_dir, filename))
-        # 搜索分类子目录
+        # 搜索分类子目录 + 二级子目录（三层结构）
         if os.path.exists(agent_dir) and os.path.isdir(agent_dir):
             for item in os.listdir(agent_dir):
                 item_path = os.path.join(agent_dir, item)
                 if os.path.isdir(item_path):
                     possible_paths.append(os.path.join(item_path, filename))
+                    # 三层：再往下一级
+                    if os.path.exists(item_path) and os.path.isdir(item_path):
+                        for sub_item in os.listdir(item_path):
+                            sub_path = os.path.join(item_path, sub_item)
+                            if os.path.isdir(sub_path):
+                                possible_paths.append(os.path.join(sub_path, filename))
     possible_paths.append(os.path.join(settings.DOCUMENTS_DIR, filename))
     # 外部知识库
     if agent_id == "__external__":

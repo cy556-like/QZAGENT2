@@ -1122,7 +1122,7 @@ async def chat_with_file_stream(
 
 @router.post("/upload", summary="上传文档到知识库")
 
-async def upload_document(file: UploadFile = File(...), agent_id: str = Form(None), category: str = Form(''), username: str = Depends(require_auth)):
+async def upload_document(file: UploadFile = File(...), agent_id: str = Form(None), category: str = Form(''), subcategory: str = Form(''), username: str = Depends(require_auth)):
 
     """
 
@@ -1192,6 +1192,10 @@ async def upload_document(file: UploadFile = File(...), agent_id: str = Form(Non
 
             agent_dir = os.path.join(agent_dir, category)
 
+        if subcategory:
+
+            agent_dir = os.path.join(agent_dir, subcategory)
+
         os.makedirs(agent_dir, exist_ok=True)
 
         # URL解码文件名：浏览器上传的中文文件名可能是URL编码的，统一解码
@@ -1222,7 +1226,7 @@ async def upload_document(file: UploadFile = File(...), agent_id: str = Form(Non
 
         # 避免文件加载+分块+Embedding API调用阻塞整个事件循环
 
-        result = await asyncio.to_thread(index_document, file_path, decoded_filename, agent_id=agent_id)
+        result = await asyncio.to_thread(index_document, file_path, decoded_filename, agent_id=agent_id, category=category or None, subcategory=subcategory or None)
 
         indexing_mode_result = result.get('indexing_mode', 'unknown')
 
@@ -1274,6 +1278,8 @@ async def list_documents(
 
     category: str = Query(None, description="文件分类（手册/程序文件/三层次文件/记录表格/其他）"),
 
+    subcategory: str = Query(None, description="二级子目录名（必须同时指定 category）"),
+
 ):
 
     """获取知识库中所有文档列表（支持分页，按智能体隔离）
@@ -1310,7 +1316,7 @@ async def list_documents(
 
 
 
-    docs = list_indexed_documents(agent_id=agent_id, category=category)
+    docs = list_indexed_documents(agent_id=agent_id, category=category, subcategory=subcategory)
 
     # 额外扫描：list_indexed_documents 已扫描 .pdf/.txt/.docx，
 
@@ -1452,12 +1458,222 @@ async def get_document_stats(
     # 3. 获取文档数量
     docs = list_indexed_documents(agent_id=agent_id)
     total_documents = len(docs)
-    
+
     return {
         "total_documents": total_documents,
         "total_chunks": total_chunks,
         "indexing_mode": indexing_mode,
     }
+
+
+# ===== 二级子目录管理 API（三列布局用）=====
+
+@router.get("/kb/subcategories", summary="列出某一级分类下的二级子目录")
+async def list_subcategories_api(
+    agent_id: str = Query(..., description="智能体ID"),
+    category: str = Query(..., description="一级分类名"),
+    username: str = Depends(require_auth),
+):
+    """列出指定智能体的某一级分类下所有二级子目录名"""
+    from app.rag.document import list_subcategories
+    try:
+        subcats = await asyncio.to_thread(list_subcategories, agent_id, category)
+        return {"success": True, "subcategories": subcats}
+    except Exception as e:
+        logger.exception(f"列出子目录失败: {e}")
+        return {"success": True, "subcategories": []}
+
+
+@router.post("/kb/subcategories", summary="新建二级子目录")
+async def create_subcategory_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """新建二级子目录（在指定 agent_id + category 下创建子文件夹）"""
+    from app.rag.document import list_subcategories
+    body = await request.json()
+    agent_id = body.get("agent_id", "").strip()
+    category = body.get("category", "").strip()
+    subcategory = body.get("subcategory", "").strip()
+    if not agent_id or not category or not subcategory:
+        raise HTTPException(status_code=400, detail="agent_id/category/subcategory 不能为空")
+    # 校验名称不含非法字符
+    import re as _re
+    if _re.search(r'[\\/:*?"<>|]', subcategory):
+        raise HTTPException(status_code=400, detail="子目录名含非法字符")
+    # 检查是否已存在
+    existing = await asyncio.to_thread(list_subcategories, agent_id, category)
+    if subcategory in existing:
+        raise HTTPException(status_code=400, detail=f"子目录「{subcategory}」已存在")
+    # 创建磁盘文件夹
+    sub_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category, subcategory)
+    os.makedirs(sub_dir, exist_ok=True)
+    logger.info(f"[KB] 新建子目录: agent={agent_id}, cat={category}, sub={subcategory}, user={username}")
+    return {"success": True, "subcategory": subcategory}
+
+
+@router.put("/kb/subcategories", summary="重命名二级子目录")
+async def rename_subcategory_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """重命名二级子目录（同步更新磁盘/ChromaDB/关键词索引）"""
+    from app.rag.document import rename_subcategory
+    body = await request.json()
+    agent_id = body.get("agent_id", "").strip()
+    category = body.get("category", "").strip()
+    old_sub = body.get("old_subcategory", "").strip()
+    new_sub = body.get("new_subcategory", "").strip()
+    if not all([agent_id, category, old_sub, new_sub]):
+        raise HTTPException(status_code=400, detail="参数不完整")
+    result = await asyncio.to_thread(rename_subcategory, agent_id, category, old_sub, new_sub)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=400, detail=result.get("message", "重命名失败"))
+    logger.info(f"[KB] 重命名子目录: {old_sub} -> {new_sub}, user={username}")
+    return {"success": True, "message": result.get("message")}
+
+
+@router.delete("/kb/subcategories", summary="删除二级子目录及其下所有文件")
+async def delete_subcategory_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """删除二级子目录（同时删除磁盘文件 + ChromaDB 文档 + 关键词索引）"""
+    from app.rag.document import delete_subcategory
+    body = await request.json()
+    agent_id = body.get("agent_id", "").strip()
+    category = body.get("category", "").strip()
+    subcategory = body.get("subcategory", "").strip()
+    if not all([agent_id, category, subcategory]):
+        raise HTTPException(status_code=400, detail="参数不完整")
+    result = await asyncio.to_thread(delete_subcategory, agent_id, category, subcategory)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=400, detail=result.get("message", "删除失败"))
+    logger.info(f"[KB] 删除子目录: {category}/{subcategory}, user={username}")
+    return {"success": True, "message": result.get("message")}
+
+
+@router.put("/kb/categories", summary="重命名一级分类")
+async def rename_category_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """重命名一级分类：重命名磁盘文件夹 + 更新所有文档的 category metadata"""
+    body = await request.json()
+    agent_id = body.get("agent_id", "").strip()
+    old_cat = body.get("old_category", "").strip()
+    new_cat = body.get("new_category", "").strip()
+    if not all([agent_id, old_cat, new_cat]):
+        raise HTTPException(status_code=400, detail="参数不完整")
+    import re as _re
+    if _re.search(r'[\\/:*?"<>|]', new_cat):
+        raise HTTPException(status_code=400, detail="分类名含非法字符")
+
+    # 1. 重命名磁盘文件夹
+    old_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", old_cat)
+    new_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", new_cat)
+    if os.path.exists(new_dir):
+        raise HTTPException(status_code=400, detail=f"分类「{new_cat}」已存在")
+    if os.path.exists(old_dir):
+        os.rename(old_dir, new_dir)
+
+    # 2. 更新 ChromaDB metadata
+    from app.rag.document import get_vector_store, _load_keyword_index, _save_keyword_index, _bm25_cache_invalidation
+    vector_store = get_vector_store(agent_id=agent_id)
+    if vector_store is not None:
+        try:
+            collection = vector_store._collection
+            all_docs = collection.get(include=["metadatas"])
+            for i, meta in enumerate(all_docs["metadatas"]):
+                if meta and meta.get("category") == old_cat:
+                    doc_id = all_docs["ids"][i]
+                    new_meta = dict(meta)
+                    new_meta["category"] = new_cat
+                    collection.update(ids=[doc_id], metadatas=[new_meta])
+        except Exception as e:
+            logger.warning(f"更新 ChromaDB category 失败: {e}")
+
+    # 3. 更新关键词索引
+    keyword_docs = _load_keyword_index(agent_id)
+    updated = False
+    for entry in keyword_docs:
+        if entry.get("category") == old_cat:
+            entry["category"] = new_cat
+            updated = True
+    if updated:
+        _save_keyword_index(keyword_docs, agent_id)
+        _bm25_cache_invalidation(agent_id)
+
+    logger.info(f"[KB] 重命名一级分类: {old_cat} -> {new_cat}, user={username}")
+    return {"success": True, "message": f"已重命名「{old_cat}」→「{new_cat}」"}
+
+
+@router.delete("/kb/categories", summary="删除一级分类及其下所有子目录和文件")
+async def delete_category_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """删除一级分类：删除磁盘文件夹 + ChromaDB 文档 + 关键词索引"""
+    body = await request.json()
+    agent_id = body.get("agent_id", "").strip()
+    category = body.get("category", "").strip()
+    if not all([agent_id, category]):
+        raise HTTPException(status_code=400, detail="参数不完整")
+
+    # 1. 删除磁盘文件夹
+    cat_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    if os.path.exists(cat_dir):
+        import shutil
+        shutil.rmtree(cat_dir, ignore_errors=True)
+
+    # 2. 从 ChromaDB 删除
+    from app.rag.document import get_vector_store, _load_keyword_index, _save_keyword_index, _bm25_cache_invalidation
+    vector_store = get_vector_store(agent_id=agent_id)
+    if vector_store is not None:
+        try:
+            collection = vector_store._collection
+            all_docs = collection.get(include=["metadatas"])
+            ids_to_delete = []
+            for i, meta in enumerate(all_docs["metadatas"]):
+                if meta and meta.get("category") == category:
+                    ids_to_delete.append(all_docs["ids"][i])
+            if ids_to_delete:
+                collection.delete(ids=ids_to_delete)
+        except Exception as e:
+            logger.warning(f"从 ChromaDB 删除分类文档失败: {e}")
+
+    # 3. 从关键词索引删除
+    keyword_docs = _load_keyword_index(agent_id)
+    new_keyword_docs = [e for e in keyword_docs if e.get("category") != category]
+    if len(new_keyword_docs) != len(keyword_docs):
+        _save_keyword_index(new_keyword_docs, agent_id)
+        _bm25_cache_invalidation(agent_id)
+
+    logger.info(f"[KB] 删除一级分类: {category}, user={username}")
+    return {"success": True, "message": f"已删除分类「{category}」及其下所有文件"}
+
+
+@router.post("/kb/categories", summary="新建一级分类")
+async def create_category_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """新建一级分类（在 data/documents/agent_{agent_id}/ 下创建文件夹）"""
+    body = await request.json()
+    agent_id = body.get("agent_id", "").strip()
+    category = body.get("category", "").strip()
+    if not agent_id or not category:
+        raise HTTPException(status_code=400, detail="agent_id 和 category 不能为空")
+    import re as _re
+    if _re.search(r'[\\/:*?"<>|]', category):
+        raise HTTPException(status_code=400, detail="分类名含非法字符")
+    cat_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
+    if os.path.exists(cat_dir):
+        raise HTTPException(status_code=400, detail=f"分类「{category}」已存在")
+    os.makedirs(cat_dir, exist_ok=True)
+    logger.info(f"[KB] 新建一级分类: {category}, user={username}")
+    return {"success": True, "category": category}
+
 
 @router.put("/documents/{filename}", summary="修改知识库文档内容")
 
