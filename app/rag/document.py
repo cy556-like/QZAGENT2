@@ -633,7 +633,7 @@ def reindex_all_documents(agent_id: str = None):
         if os.path.exists(scan_dir):
             for fname in os.listdir(scan_dir):
                 ext = os.path.splitext(fname)[1].lower()
-                if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                     file_path = os.path.join(scan_dir, fname)
                     if os.path.isfile(file_path):
                         document_files.add(fname)
@@ -2819,7 +2819,7 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
         if os.path.exists(scan_dir):
             for fname in os.listdir(scan_dir):
                 ext = os.path.splitext(fname)[1].lower()
-                if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                     file_path = os.path.join(scan_dir, fname)
                     if os.path.isfile(file_path):
                         sources.add(fname)
@@ -2830,7 +2830,7 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
                 item_path = os.path.join(scan_dir, item)
                 if os.path.isfile(item_path):
                     ext = os.path.splitext(item)[1].lower()
-                    if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                    if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                         sources.add(item)
                 elif os.path.isdir(item_path):
                     # 分类子目录：如果指定了 category，只扫该分类
@@ -2838,7 +2838,7 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
                         if item == category:
                             for fname in os.listdir(item_path):
                                 ext = os.path.splitext(fname)[1].lower()
-                                if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                                if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                                     file_path = os.path.join(item_path, fname)
                                     if os.path.isfile(file_path):
                                         sources.add(fname)
@@ -2846,7 +2846,7 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
                         # 没指定 category，扫所有分类
                         for fname in os.listdir(item_path):
                             ext = os.path.splitext(fname)[1].lower()
-                            if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                            if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                                 file_path = os.path.join(item_path, fname)
                                 if os.path.isfile(file_path):
                                     sources.add(fname)
@@ -2855,7 +2855,7 @@ def list_indexed_documents(agent_id: str = None, category: str = None) -> list[s
         if os.path.exists(scan_dir):
             for fname in os.listdir(scan_dir):
                 ext = os.path.splitext(fname)[1].lower()
-                if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                     file_path = os.path.join(scan_dir, fname)
                     if os.path.isfile(file_path):
                         sources.add(fname)
