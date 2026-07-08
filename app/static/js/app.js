@@ -3894,7 +3894,7 @@ function showKbPage() {
     // Update title
     const agent = myAgents.find(a => a.id === currentAgentId);
     const agentName = agent ? agent.name : '智能体';
-    document.getElementById('kbPageTitle').textContent = agentName + ' - 知识库管理';
+    document.getElementById('kbPageTitle').textContent = '企业内部文件知识库';
     document.getElementById('kbPageDesc').textContent = '上传和管理' + agentName + '相关文档，系统将自动进行向量化处理';
     // [BUG FIX] 推入历史状态，让浏览器←按钮能回到聊天页
     history.pushState({page: 'kb'}, '');
