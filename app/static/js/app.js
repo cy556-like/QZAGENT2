@@ -3482,6 +3482,7 @@ function generateDocument(type) {
         }
         document.getElementById('chatContent').classList.remove('centered');
         const bubble = createStreamingBubble();
+        const bubbleContent = bubble.querySelector('.bubble') || bubble;
         
         (async () => {
             if (isLoading) return;
@@ -3491,59 +3492,47 @@ function generateDocument(type) {
                 if (!currentChatId) { isLoading = false; return; }
             }
             try {
-                // 先调 SCskill API 生成文件
+                // 显示进度
+                bubbleContent.innerHTML = '<p>正在分析体系调研数据...</p>';
+                scrollToBottom();
+                
+                // 调 SCskill API 生成文件
                 const genResp = await fetch('/api/v1/generate/manual', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
                     body: JSON.stringify({ survey_data: surveyData })
                 });
+                
+                bubbleContent.innerHTML = '<p>正在从知识库读取模板文件...</p>';
+                scrollToBottom();
+                
                 const genData = await genResp.json();
                 
                 if (genData.success) {
-                    // 文件生成成功，让 AI 在对话中说明
-                    const surveyText = formatSurveyDataForAI();
-                    await streamChat('/api/v1/chat/stream', {
-                        method: 'POST',
-                        headers: apiHeaders(),
-                        body: JSON.stringify({
-                            message: '用户已通过SCskill生成质量手册。文件名：' + genData.filename + '。请简要告知用户手册已生成，可点击下载链接下载。下载链接：' + genData.download_url,
-                            session_id: currentChatId,
-                            web_search: false,
-                            mode: currentMode,
-                            deep_think: false,
-                            skill: 'manual',
-                            agent_id: currentAgentId || '',
-                            agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : ''
-                        })
-                    }, bubble);
+                    // 显示成功 + 下载按钮
+                    const reps = genData.replacements || {};
+                    let repInfo = '';
+                    if (reps.paragraphs) repInfo += `段落${reps.paragraphs}处 `;
+                    if (reps.tables) repInfo += `表格${reps.tables}处 `;
+                    if (reps.headers_footers) repInfo += `页眉页脚${reps.headers_footers}处`;
                     
-                    // 在气泡末尾添加下载按钮
-                    const downloadHtml = '<br><br><a href="' + genData.download_url + '" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载质量手册</a>';
-                    bubble.querySelector('.bubble').innerHTML += downloadHtml;
+                    bubbleContent.innerHTML = 
+                        '<p>质量手册已生成完成</p>' +
+                        '<p>替换内容：' + repInfo + '</p>' +
+                        '<br><a href="' + genData.download_url + '" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载质量手册</a>';
                     
+                    // 保存到对话记录
+                    if (currentChatId) {
+                        await fetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() });
+                    }
                     await loadChatList();
                     scrollToBottom();
                 } else {
-                    // 生成失败，用 AI 回答
-                    await streamChat('/api/v1/chat/stream', {
-                        method: 'POST',
-                        headers: apiHeaders(),
-                        body: JSON.stringify({
-                            message: '请' + typeName + '。\n\n' + surveyText + '\n\n基于以上体系调研信息，生成完整的' + typeName + '。',
-                            session_id: currentChatId,
-                            web_search: webSearchEnabled,
-                            mode: currentMode,
-                            deep_think: deepThinkEnabled,
-                            skill: 'manual',
-                            agent_id: currentAgentId || '',
-                            agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : ''
-                        })
-                    }, bubble);
-                    await loadChatList();
-                    scrollToBottom();
+                    bubbleContent.innerHTML = '<p style="color:#e63946;">生成失败：' + (genData.detail || genData.message || '未知错误') + '</p><p>请确保已在"企业内部体系文件 -> 手册"分类下上传了 .docx 格式的质量手册模板文件。</p>';
                 }
             } catch (e) {
                 console.error('[生成手册] 失败:', e);
+                bubbleContent.innerHTML = '<p style="color:#e63946;">生成失败：' + e.message + '</p>';
             } finally {
                 resetStreamingUI();
             }
