@@ -3267,9 +3267,21 @@ def delete_document(filename: str, agent_id: str = None) -> dict:
                             if os.path.isdir(sub_path):
                                 possible_paths.append(os.path.join(sub_path, filename))
     possible_paths.append(os.path.join(settings.DOCUMENTS_DIR, filename))
-    # 外部知识库
+    # 外部知识库（扫描根目录 + 所有分类子目录 + 二级子目录）
     if agent_id == "__external__":
-        possible_paths.append(os.path.join(settings.DOCUMENTS_DIR, "external_kb", filename))
+        ext_dir = os.path.join(settings.DOCUMENTS_DIR, "external_kb")
+        possible_paths.append(os.path.join(ext_dir, filename))
+        if os.path.exists(ext_dir) and os.path.isdir(ext_dir):
+            for item in os.listdir(ext_dir):
+                item_path = os.path.join(ext_dir, item)
+                if os.path.isdir(item_path):
+                    possible_paths.append(os.path.join(item_path, filename))
+                    # 二级子目录
+                    if os.path.exists(item_path) and os.path.isdir(item_path):
+                        for sub_item in os.listdir(item_path):
+                            sub_path = os.path.join(item_path, sub_item)
+                            if os.path.isdir(sub_path):
+                                possible_paths.append(os.path.join(sub_path, filename))
 
     for file_path in possible_paths:
         if os.path.exists(file_path):
