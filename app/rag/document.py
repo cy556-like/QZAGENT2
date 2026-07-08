@@ -2877,6 +2877,9 @@ def list_categories(agent_id: str) -> list[str]:
 
     合并三者，确保空分类目录也能显示（用户刚创建还没传文件的分类）。
     如果完全没有分类，返回默认的 5 个初始分类（手册/程序文件/三层次文件/记录表格/其他）。
+
+    排序规则：前 5 个固定顺序为 [手册, 程序文件, 三层次文件, 记录表格, 其他]，
+    用户新建的分类按创建顺序排在最后。
     """
     if not agent_id:
         return []
@@ -2909,10 +2912,20 @@ def list_categories(agent_id: str) -> list[str]:
         if entry.get("category"):
             cats.add(entry["category"])
 
-    result = sorted(list(cats))
     # 如果完全没有分类，返回默认的 5 个初始分类
-    if not result:
+    if not cats:
         return ['手册', '程序文件', '三层次文件', '记录表格', '其他']
+
+    # 固定顺序的前 5 个分类
+    fixed_order = ['手册', '程序文件', '三层次文件', '记录表格', '其他']
+    result = []
+    # 先按固定顺序加入存在的分类
+    for cat in fixed_order:
+        if cat in cats:
+            result.append(cat)
+            cats.discard(cat)
+    # 剩余的分类（用户新建的）按字母顺序排在后面
+    result.extend(sorted(cats))
     return result
 
 
