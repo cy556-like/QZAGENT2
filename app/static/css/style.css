@@ -7073,6 +7073,161 @@ html { scroll-behavior: smooth; }
 }
 
 
+/* ===== 一键生成手册 - SSE 进度样式 ===== */
+.gen-manual-progress {
+    padding: 8px 4px;
+    font-size: 14px;
+    line-height: 1.6;
+}
+.gen-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #15589B;
+}
+.gen-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #d1d5db;
+    border-top-color: #15589B;
+    border-radius: 50%;
+    animation: gen-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+@keyframes gen-spin {
+    to { transform: rotate(360deg); }
+}
+.gen-step-text {
+    font-size: 14px;
+}
+.gen-progress-bar-wrap {
+    width: 100%;
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+.gen-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #15589B, #3b82f6);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.gen-message {
+    color: #6b7280;
+    font-size: 13px;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.gen-mods-header {
+    color: #15589B;
+    font-weight: 600;
+    font-size: 13px;
+    margin: 8px 0 6px 0;
+    padding-top: 6px;
+    border-top: 1px dashed #e5e7eb;
+}
+.gen-mods-list {
+    max-height: 280px;
+    overflow-y: auto;
+    border-left: 2px solid #e5e7eb;
+    padding-left: 8px;
+}
+.gen-mod-item {
+    padding: 4px 0;
+    font-size: 12.5px;
+    color: #4b5563;
+    line-height: 1.5;
+    border-bottom: 1px dotted #f3f4f6;
+    animation: gen-fade-in 0.3s ease;
+}
+@keyframes gen-fade-in {
+    from { opacity: 0; transform: translateX(-4px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+.gen-mod-badge {
+    display: inline-block;
+    background: #dbeafe;
+    color: #15589B;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-right: 6px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.gen-mod-preview {
+    color: #1f2937;
+    word-break: break-all;
+}
+.gen-mod-reason {
+    color: #9ca3af;
+    font-style: italic;
+    margin-left: 4px;
+}
+.gen-mod-global_replace .gen-mod-badge { background: #fef3c7; color: #92400e; }
+.gen-mod-header_replace .gen-mod-badge { background: #ede9fe; color: #5b21b6; }
+.gen-mod-table_cell .gen-mod-badge { background: #d1fae5; color: #065f46; }
+
+/* 完成态展示 */
+.gen-manual-success {
+    padding: 8px 4px;
+}
+.gen-success-title {
+    color: #10b981;
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0 0 6px 0;
+}
+.gen-success-info {
+    color: #6b7280;
+    font-size: 13px;
+    margin: 0 0 4px 0;
+}
+.gen-success-stats {
+    color: #4b5563;
+    font-size: 13px;
+    margin: 0 0 10px 0;
+}
+.gen-mods-details {
+    margin: 10px 0;
+    background: #f9fafb;
+    border-radius: 6px;
+    padding: 6px 10px;
+    border: 1px solid #e5e7eb;
+}
+.gen-mods-details summary {
+    cursor: pointer;
+    color: #15589B;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 4px 0;
+    user-select: none;
+}
+.gen-mods-details summary:hover {
+    color: #1d4ed8;
+}
+.gen-mods-detail-list {
+    margin-top: 8px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+.gen-mod-detail-item {
+    padding: 6px 8px;
+    font-size: 12.5px;
+    color: #4b5563;
+    background: #fff;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    border-left: 3px solid #15589B;
+}
+
+
 /* xlsx 下载按钮样式（绿色系，区别于 docx 的蓝色系） */
 
 

@@ -3041,18 +3041,21 @@ if _SCSCRIPTS_DIR not in _sys_top.path:
     _sys_top.path.insert(0, _SCSCRIPTS_DIR)
 
 
-@router.post("/generate/manual", summary="一键生成质量手册（AI 驱动）")
+@router.post("/generate/manual", summary="一键生成质量手册（AI 驱动，SSE 流式进度）")
 async def generate_manual_api(request: Request, username: str = Depends(require_auth)):
-    """AI 驱动生成质量手册：
-    1. 从知识库"手册"分类读取模板
-    2. 提取模板结构概览（段落/表格/页眉页脚）
-    3. 用当前选择的 LLM 模型分析"模板+调研数据"，生成结构化修改方案
-    4. 应用修改方案到 docx，保存输出
+    """AI 驱动生成质量手册，SSE 流式推送每一步进度。
+    响应 Content-Type: text/event-stream
+    每个事件 data: 是 JSON 字符串，格式：
+      {"type":"progress","step":"模板查找","message":"...","detail":"..."}
+      {"type":"modification","mod":{"type":"global_replace","old":"...","new":"...","n":3,"reason":"..."}}
+      {"type":"success","filename":"...","download_url":"...","stats":{...},"modifications_count":N}
+      {"type":"error","message":"..."}
     """
     import asyncio
     import re as _re
     import sys as _sys
     import importlib
+    import json as _json
     from datetime import datetime
     from langchain_core.messages import HumanMessage, SystemMessage
     from app.agent.core import create_llm
@@ -3067,99 +3070,271 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
     if not os.path.exists(os.path.join(_SCSCRIPTS_DIR, "generate_manual.py")):
         raise HTTPException(status_code=500, detail=f"SCskill 模块未找到: {_SCSCRIPTS_DIR}")
 
-    # 输出目录
     export_dir = os.path.join(settings.DATA_DIR, "export")
     os.makedirs(export_dir, exist_ok=True)
 
     current_model = get_current_model() or "glm-5.2"
     logger.info(f"[SCskill] AI 生成质量手册: user={username}, model={current_model}")
 
-    try:
-        # 1. import SCskill 模块
-        if 'generate_manual' in _sys.modules:
-            gm = importlib.reload(_sys.modules['generate_manual'])
-        else:
-            gm = importlib.import_module('generate_manual')
+    async def sse_event_stream():
+        """SSE 事件流生成器"""
+        async def send(evt: dict):
+            return f"data: {_json.dumps(evt, ensure_ascii=False)}\n\n"
 
-        # 2. 查找模板
-        template_path, need_convert = gm.find_template()
-        if template_path is None:
-            raise HTTPException(status_code=500, detail="未找到模板文件。请在内部知识库[手册]分类下上传 .docx/.doc 模板。")
+        try:
+            # 步骤 1：分析调研数据
+            yield await send({
+                "type": "progress",
+                "step": "分析调研数据",
+                "message": f"正在分析体系调研数据（公司：{survey_data.get('sv_company_name','未填写')}）...",
+                "progress": 5
+            })
+            await asyncio.sleep(0.1)
 
-        # 3. .doc → .docx 转换
-        actual_template = template_path
-        if need_convert:
-            logger.info("[SCskill] 模板为 .doc 格式，正在转换为 .docx")
-            converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
-            if not converted:
-                raise HTTPException(status_code=500, detail=".doc 模板转换失败，请安装 LibreOffice 或上传 .docx 模板")
-            actual_template = converted
+            # 步骤 2：import SCskill 模块
+            if 'generate_manual' in _sys.modules:
+                gm = importlib.reload(_sys.modules['generate_manual'])
+            else:
+                gm = importlib.import_module('generate_manual')
 
-        # 4. 加载模板
-        from docx import Document
-        doc = await asyncio.to_thread(Document, str(actual_template))
-        logger.info(f"[SCskill] 模板加载完成: {len(doc.paragraphs)} 段, {len(doc.tables)} 表")
+            # 步骤 3：查找模板
+            yield await send({
+                "type": "progress",
+                "step": "查找模板",
+                "message": "正在从知识库[手册]分类查找模板文件...",
+                "progress": 10
+            })
+            await asyncio.sleep(0.1)
+            template_path, need_convert = gm.find_template()
+            if template_path is None:
+                yield await send({
+                    "type": "error",
+                    "message": "未找到模板文件。请在内部知识库[手册]分类下上传 .docx/.doc 模板。"
+                })
+                return
 
-        # 5. 提取模板结构概览
-        overview = await asyncio.to_thread(gm.extract_template_overview, doc)
-        overview_text = gm.format_overview_for_llm(overview)
-        survey_text = gm.format_survey_for_llm(survey_data)
-        logger.info(f"[SCskill] 概览: {len(overview['paragraphs'])} 段, "
-                    f"{len(overview['tables'])} 表, 概览文本 {len(overview_text)} 字符")
+            # 步骤 4：.doc 转 .docx（如需要）
+            actual_template = template_path
+            if need_convert:
+                yield await send({
+                    "type": "progress",
+                    "step": "转换模板格式",
+                    "message": f"模板为 .doc 格式，正在转换为 .docx ...",
+                    "progress": 15
+                })
+                converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
+                if not converted:
+                    yield await send({
+                        "type": "error",
+                        "message": ".doc 模板转换失败，请安装 LibreOffice 或上传 .docx 模板"
+                    })
+                    return
+                actual_template = converted
 
-        # 6. 调用 LLM 生成修改方案（用项目已有的 create_llm，自动跟随用户选择的模型）
-        system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text)
-        # deep_think=True 让 LLM 有更多 token 输出完整 JSON 修改方案
-        llm = create_llm(deep_think=True)
-        logger.info(f"[SCskill] 调用 LLM: model={current_model}")
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt),
-        ]
-        response = await llm.ainvoke(messages)
-        llm_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
-        logger.info(f"[SCskill] LLM 返回 {len(llm_text)} 字符")
+            # 步骤 5：加载模板
+            yield await send({
+                "type": "progress",
+                "step": "加载模板",
+                "message": f"正在加载模板文件: {os.path.basename(str(actual_template))} ...",
+                "progress": 20
+            })
+            await asyncio.sleep(0.1)
+            from docx import Document
+            doc = await asyncio.to_thread(Document, str(actual_template))
+            para_count = len(doc.paragraphs)
+            table_count = len(doc.tables)
 
-        # 7. 解析修改方案
-        modifications = gm.parse_llm_modifications(llm_text)
-        logger.info(f"[SCskill] 解析到 {len(modifications)} 个修改方案")
-        if not modifications:
-            logger.warning(f"[SCskill] 未解析到修改方案，LLM 响应前 300 字: {llm_text[:300]}")
+            # 步骤 6：提取模板结构概览
+            yield await send({
+                "type": "progress",
+                "step": "提取模板结构",
+                "message": f"正在提取模板结构（{para_count} 段，{table_count} 表）...",
+                "progress": 30
+            })
+            overview = await asyncio.to_thread(gm.extract_template_overview, doc)
+            overview_text = gm.format_overview_for_llm(overview)
+            survey_text = gm.format_survey_for_llm(survey_data)
+            await asyncio.sleep(0.1)
 
-        # 8. 应用修改方案
-        stats = await asyncio.to_thread(gm.apply_modifications, doc, modifications)
-        logger.info(f"[SCskill] 修改应用完成: {stats}")
+            # 步骤 7：构造提示词
+            yield await send({
+                "type": "progress",
+                "step": "构造 AI 提示词",
+                "message": f"已提取 {len(overview['paragraphs'])} 个非空段落，正在构造 AI 分析提示词...",
+                "progress": 40
+            })
+            system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text)
+            await asyncio.sleep(0.1)
 
-        # 9. 保存输出
-        company_name = (survey_data.get('sv_company_name') or '企业').strip()
-        safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
-        today_str = datetime.now().strftime("%Y%m%d")
-        filename = f"质量管理手册_{safe_name}_{today_str}.docx"
-        output_path = os.path.join(export_dir, filename)
-        await asyncio.to_thread(doc.save, output_path)
-        logger.info(f"[SCskill] 手册已生成: {output_path}")
+            # 步骤 8：调用 LLM
+            yield await send({
+                "type": "progress",
+                "step": "调用 AI 模型",
+                "message": f"正在调用 AI 模型 [{current_model}] 分析模板并生成修改方案...\n（此步骤通常需要 20-60 秒，请耐心等待）",
+                "progress": 50
+            })
+            llm = create_llm(deep_think=True)
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+            try:
+                response = await asyncio.wait_for(llm.ainvoke(messages), timeout=120)
+            except asyncio.TimeoutError:
+                yield await send({
+                    "type": "error",
+                    "message": "AI 模型调用超时（120秒），请重试或切换更快的模型"
+                })
+                return
+            llm_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+            logger.info(f"[SCskill] LLM 返回 {len(llm_text)} 字符")
 
-        download_url = f"/api/v1/documents/export-download/{filename}"
-        return {
-            "success": True,
-            "filename": filename,
-            "download_url": download_url,
-            "modifications_count": len(modifications),
-            "fill_stats": stats,
-            "model_used": current_model,
-            "replacements": {
-                "paragraphs": stats.get('paragraph', 0),
-                "tables": stats.get('table_cell', 0),
-                "global_replace": stats.get('global_replace', 0),
-                "header_replace": stats.get('header_replace', 0),
-            },
+            # 步骤 9：解析修改方案
+            yield await send({
+                "type": "progress",
+                "step": "解析修改方案",
+                "message": f"AI 返回 {len(llm_text)} 字符响应，正在解析修改方案...",
+                "progress": 70
+            })
+            modifications = gm.parse_llm_modifications(llm_text)
+            await asyncio.sleep(0.1)
+            if not modifications:
+                yield await send({
+                    "type": "error",
+                    "message": "AI 未能生成有效的修改方案，请重试或更换模型"
+                })
+                return
+
+            # 步骤 10：应用修改方案（实时推送每一条修改）
+            yield await send({
+                "type": "progress",
+                "step": "应用修改方案",
+                "message": f"正在应用 {len(modifications)} 个修改方案到模板...",
+                "progress": 75
+            })
+
+            # 自定义 apply 函数，每应用一条就推送进度
+            stats = {
+                'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
+                'header_replace': 0, 'unknown': 0, 'failed': 0,
+            }
+            total = len(modifications)
+            for i, mod in enumerate(modifications):
+                try:
+                    mod_type = mod.get('type', '')
+                    reason = (mod.get('reason', '') or '')[:80]
+                    progress = 75 + int((i / max(total, 1)) * 20)  # 75-95
+
+                    if mod_type == 'paragraph':
+                        idx = int(mod.get('index', -1))
+                        new_text = mod.get('new_text', '')
+                        ok = gm.apply_paragraph_replace(doc, idx, new_text)
+                        if ok:
+                            stats['paragraph'] += 1
+                            preview = (new_text or '')[:60]
+                            yield await send({
+                                "type": "modification",
+                                "mod_type": "paragraph",
+                                "location": f"段落 P{idx}",
+                                "reason": reason,
+                                "preview": preview,
+                                "progress": progress
+                            })
+                        else:
+                            stats['failed'] += 1
+                    elif mod_type == 'table_cell':
+                        ti = int(mod.get('table', -1))
+                        ri = int(mod.get('row', -1))
+                        ci = int(mod.get('col', -1))
+                        new_text = mod.get('new_text', '')
+                        ok = gm.apply_table_cell_replace(doc, ti, ri, ci, new_text)
+                        if ok:
+                            stats['table_cell'] += 1
+                            yield await send({
+                                "type": "modification",
+                                "mod_type": "table_cell",
+                                "location": f"表格 T{ti} 第{ri+1}行第{ci+1}列",
+                                "reason": reason,
+                                "preview": (new_text or '')[:60],
+                                "progress": progress
+                            })
+                        else:
+                            stats['failed'] += 1
+                    elif mod_type == 'global_replace':
+                        old = mod.get('old', '')
+                        new = mod.get('new', '')
+                        n = gm.apply_global_replace(doc, old, new)
+                        stats['global_replace'] += n
+                        yield await send({
+                            "type": "modification",
+                            "mod_type": "global_replace",
+                            "location": "全文",
+                            "reason": reason,
+                            "preview": f"'{old}' → '{new}'（{n} 处）",
+                            "progress": progress
+                        })
+                    elif mod_type == 'header_replace':
+                        old = mod.get('old', '')
+                        new = mod.get('new', '')
+                        n = gm.apply_header_replace(doc, old, new)
+                        stats['header_replace'] += n
+                        yield await send({
+                            "type": "modification",
+                            "mod_type": "header_replace",
+                            "location": "页眉/页脚",
+                            "reason": reason,
+                            "preview": f"'{old}' → '{new}'（{n} 处）",
+                            "progress": progress
+                        })
+                    else:
+                        stats['unknown'] += 1
+                except Exception as e:
+                    stats['failed'] += 1
+                    logger.warning(f"[SCskill] 修改 #{i} 失败: {e}")
+
+            # 步骤 11：保存输出
+            yield await send({
+                "type": "progress",
+                "step": "保存文件",
+                "message": "正在保存生成的高质量手册文件...",
+                "progress": 97
+            })
+            company_name = (survey_data.get('sv_company_name') or '企业').strip()
+            safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
+            today_str = datetime.now().strftime("%Y%m%d")
+            filename = f"质量管理手册_{safe_name}_{today_str}.docx"
+            output_path = os.path.join(export_dir, filename)
+            await asyncio.to_thread(doc.save, output_path)
+            logger.info(f"[SCskill] 手册已生成: {output_path}")
+
+            # 完成
+            download_url = f"/api/v1/documents/export-download/{filename}"
+            yield await send({
+                "type": "success",
+                "filename": filename,
+                "download_url": download_url,
+                "modifications_count": len(modifications),
+                "stats": stats,
+                "model_used": current_model,
+                "progress": 100
+            })
+
+        except Exception as e:
+            logger.exception(f"[SCskill] 生成手册异常: {e}")
+            yield await send({
+                "type": "error",
+                "message": f"生成失败: {str(e)}"
+            })
+
+    return StreamingResponse(
+        sse_event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Nginx 不缓冲，实时推送
+            "Connection": "keep-alive",
         }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"[SCskill] 生成手册异常: {e}")
-        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+    )
 
 
 # ===== 体系调研文档上传与AI提取 =====

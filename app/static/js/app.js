@@ -3468,7 +3468,7 @@ function generateDocument(type) {
     };
     const typeName = typeMap[type] || type;
     
-    // 一键生成手册：调用 SCskill API
+    // 一键生成手册：调用 SCskill API（SSE 流式接收进度）
     if (type === 'manual') {
         const surveyData = getSurveyData();
         if (!surveyData) {
@@ -3483,7 +3483,7 @@ function generateDocument(type) {
         document.getElementById('chatContent').classList.remove('centered');
         const bubble = createStreamingBubble();
         const bubbleContent = bubble.querySelector('.bubble') || bubble;
-        
+
         (async () => {
             if (isLoading) return;
             isLoading = true;
@@ -3492,43 +3492,151 @@ function generateDocument(type) {
                 if (!currentChatId) { isLoading = false; return; }
             }
             try {
-                // 显示进度
-                bubbleContent.innerHTML = '<p>正在分析体系调研数据...</p>';
+                // 渲染初始容器
+                bubbleContent.innerHTML = `
+                    <div class="gen-manual-progress">
+                        <div class="gen-progress-header">
+                            <span class="gen-spinner"></span>
+                            <span class="gen-step-text">正在启动...</span>
+                        </div>
+                        <div class="gen-progress-bar-wrap">
+                            <div class="gen-progress-bar" style="width:0%"></div>
+                        </div>
+                        <div class="gen-message">准备中...</div>
+                        <div class="gen-modifications"></div>
+                    </div>
+                `;
                 scrollToBottom();
-                
-                // 调 SCskill API 生成文件
+
+                const stepTextEl = bubbleContent.querySelector('.gen-step-text');
+                const progressBarEl = bubbleContent.querySelector('.gen-progress-bar');
+                const messageEl = bubbleContent.querySelector('.gen-message');
+                const modsEl = bubbleContent.querySelector('.gen-modifications');
+
+                // 调用 SSE 接口
                 const genResp = await fetch('/api/v1/generate/manual', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken,
+                        'Accept': 'text/event-stream'
+                    },
                     body: JSON.stringify({ survey_data: surveyData })
                 });
-                
-                bubbleContent.innerHTML = '<p>正在从知识库读取模板文件...</p>';
-                scrollToBottom();
-                
-                const genData = await genResp.json();
-                
-                if (genData.success) {
-                    // 显示成功 + 下载按钮
-                    const reps = genData.replacements || {};
-                    let repInfo = '';
-                    if (reps.paragraphs) repInfo += `段落${reps.paragraphs}处 `;
-                    if (reps.tables) repInfo += `表格${reps.tables}处 `;
-                    if (reps.headers_footers) repInfo += `页眉页脚${reps.headers_footers}处`;
-                    
-                    bubbleContent.innerHTML = 
-                        '<p>质量手册已生成完成</p>' +
-                        '<p>替换内容：' + repInfo + '</p>' +
-                        '<br><a href="' + genData.download_url + '" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载质量手册</a>';
-                    
-                    // 保存到对话记录
-                    if (currentChatId) {
-                        await fetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() });
+
+                if (!genResp.ok) {
+                    const errText = await genResp.text();
+                    throw new Error('HTTP ' + genResp.status + ': ' + errText);
+                }
+
+                // 用 ReadableStream 读取 SSE
+                const reader = genResp.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
+                let receivedCount = 0;
+                let totalMods = 0;
+                let modificationLog = []; // 收集所有修改记录，用于最终展示
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // 按 SSE 协议解析（事件以 \n\n 分隔）
+                    const events = buffer.split('\n\n');
+                    buffer = events.pop(); // 最后一段可能不完整，保留
+
+                    for (const evt of events) {
+                        const lines = evt.split('\n');
+                        let dataStr = '';
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                dataStr += line.substring(5).trim();
+                            }
+                        }
+                        if (!dataStr) continue;
+                        let data;
+                        try { data = JSON.parse(dataStr); }
+                        catch (e) { console.warn('[SSE] 解析失败:', dataStr); continue; }
+
+                        if (data.type === 'progress') {
+                            stepTextEl.textContent = data.step || '处理中';
+                            if (typeof data.progress === 'number') {
+                                progressBarEl.style.width = data.progress + '%';
+                            }
+                            messageEl.textContent = data.message || '';
+                            // 在修改日志区上方提示"正在应用修改方案"
+                            if (data.step === '应用修改方案' && !modsEl.querySelector('.gen-mods-header')) {
+                                modsEl.innerHTML = '<div class="gen-mods-header">正在应用的修改：</div><div class="gen-mods-list"></div>';
+                            }
+                        } else if (data.type === 'modification') {
+                            receivedCount++;
+                            const list = modsEl.querySelector('.gen-mods-list') || modsEl;
+                            const modItem = document.createElement('div');
+                            modItem.className = 'gen-mod-item gen-mod-' + (data.mod_type || 'other');
+                            const reasonText = data.reason ? ` <span class="gen-mod-reason">${data.reason}</span>` : '';
+                            modItem.innerHTML = `
+                                <span class="gen-mod-badge">${data.location || ''}</span>
+                                <span class="gen-mod-preview">${data.preview || ''}</span>${reasonText}
+                            `;
+                            list.appendChild(modItem);
+                            modificationLog.push({
+                                location: data.location,
+                                preview: data.preview,
+                                reason: data.reason,
+                                mod_type: data.mod_type
+                            });
+                            if (typeof data.progress === 'number') {
+                                progressBarEl.style.width = data.progress + '%';
+                            }
+                            scrollToBottom();
+                        } else if (data.type === 'success') {
+                            totalMods = data.modifications_count || receivedCount;
+                            const stats = data.stats || {};
+                            const statLines = [];
+                            if (stats.paragraph) statLines.push(`段落 ${stats.paragraph} 处`);
+                            if (stats.table_cell) statLines.push(`表格 ${stats.table_cell} 处`);
+                            if (stats.global_replace) statLines.push(`全文替换 ${stats.global_replace} 处`);
+                            if (stats.header_replace) statLines.push(`页眉页脚 ${stats.header_replace} 处`);
+                            const statText = statLines.join('，') || '无修改';
+
+                            progressBarEl.style.width = '100%';
+                            stepTextEl.textContent = '完成';
+                            stepTextEl.previousElementSibling.style.display = 'none'; // 隐藏 spinner
+
+                            // 显示完整结果
+                            bubbleContent.innerHTML = `
+                                <div class="gen-manual-success">
+                                    <p class="gen-success-title">✓ 质量手册已生成完成</p>
+                                    <p class="gen-success-info">使用模型：${data.model_used || '未知'} ｜ 共 ${totalMods} 个修改方案</p>
+                                    <p class="gen-success-stats">修改统计：${statText}</p>
+                                    <details class="gen-mods-details">
+                                        <summary>查看详细修改记录（共 ${modificationLog.length} 条）</summary>
+                                        <div class="gen-mods-detail-list">
+                                            ${modificationLog.map(m => `
+                                                <div class="gen-mod-detail-item">
+                                                    <span class="gen-mod-badge">${m.location || ''}</span>
+                                                    <span class="gen-mod-preview">${(m.preview || '').replace(/</g, '&lt;')}</span>
+                                                    ${m.reason ? `<span class="gen-mod-reason">${m.reason}</span>` : ''}
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </details>
+                                    <br>
+                                    <a href="${data.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载质量手册</a>
+                                </div>
+                            `;
+                            scrollToBottom();
+
+                            // 保存到对话记录
+                            if (currentChatId) {
+                                await fetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() });
+                            }
+                            await loadChatList();
+                        } else if (data.type === 'error') {
+                            bubbleContent.innerHTML = `<p style="color:#e63946;">生成失败：${data.message || '未知错误'}</p>`;
+                        }
                     }
-                    await loadChatList();
-                    scrollToBottom();
-                } else {
-                    bubbleContent.innerHTML = '<p style="color:#e63946;">生成失败：' + (genData.detail || genData.message || '未知错误') + '</p><p>请确保已在"企业内部体系文件 -> 手册"分类下上传了 .docx 格式的质量手册模板文件。</p>';
                 }
             } catch (e) {
                 console.error('[生成手册] 失败:', e);
