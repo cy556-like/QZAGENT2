@@ -1543,11 +1543,16 @@ async def rename_subcategory_api(
 ):
     """重命名二级子目录（同步更新磁盘/ChromaDB/关键词索引）"""
     from app.rag.document import rename_subcategory
-    body = await request.json()
-    agent_id = body.get("agent_id", "").strip()
-    category = body.get("category", "").strip()
-    old_sub = body.get("old_subcategory", "").strip()
-    new_sub = body.get("new_subcategory", "").strip()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
+    old_sub = (body.get("old_subcategory") or "").strip()
+    new_sub = (body.get("new_subcategory") or "").strip()
     if not all([agent_id, category, old_sub, new_sub]):
         raise HTTPException(status_code=400, detail="参数不完整")
     result = await asyncio.to_thread(rename_subcategory, agent_id, category, old_sub, new_sub)
@@ -1564,10 +1569,15 @@ async def delete_subcategory_api(
 ):
     """删除二级子目录（同时删除磁盘文件 + ChromaDB 文档 + 关键词索引）"""
     from app.rag.document import delete_subcategory
-    body = await request.json()
-    agent_id = body.get("agent_id", "").strip()
-    category = body.get("category", "").strip()
-    subcategory = body.get("subcategory", "").strip()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
+    subcategory = (body.get("subcategory") or "").strip()
     if not all([agent_id, category, subcategory]):
         raise HTTPException(status_code=400, detail="参数不完整")
     result = await asyncio.to_thread(delete_subcategory, agent_id, category, subcategory)
@@ -1583,10 +1593,15 @@ async def rename_category_api(
     username: str = Depends(require_auth),
 ):
     """重命名一级分类：重命名磁盘文件夹 + 更新所有文档的 category metadata"""
-    body = await request.json()
-    agent_id = body.get("agent_id", "").strip()
-    old_cat = body.get("old_category", "").strip()
-    new_cat = body.get("new_category", "").strip()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    old_cat = (body.get("old_category") or "").strip()
+    new_cat = (body.get("new_category") or "").strip()
     if not all([agent_id, old_cat, new_cat]):
         raise HTTPException(status_code=400, detail="参数不完整")
     import re as _re
@@ -1638,9 +1653,14 @@ async def delete_category_api(
     username: str = Depends(require_auth),
 ):
     """删除一级分类：删除磁盘文件夹 + ChromaDB 文档 + 关键词索引"""
-    body = await request.json()
-    agent_id = body.get("agent_id", "").strip()
-    category = body.get("category", "").strip()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
     if not all([agent_id, category]):
         raise HTTPException(status_code=400, detail="参数不完整")
 

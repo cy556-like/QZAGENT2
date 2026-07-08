@@ -13345,13 +13345,13 @@ html { scroll-behavior: smooth; }
 }
 
 
-/* ===== 外部知识库分类下拉 ===== */
+/* ===== 外部知识库分类下拉（手风琴折叠） ===== */
 .kb-cat-group {
     border-bottom: 1px solid #f0f0f0;
 }
 .kb-cat-group-title {
     width: 100%;
-    padding: 10px 16px;
+    padding: 10px 12px;
     background: none;
     border: none;
     font-size: 13px;
@@ -13360,15 +13360,48 @@ html { scroll-behavior: smooth; }
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 6px;
     text-align: left;
 }
 .kb-cat-group-title:hover {
     background: #f5f5f5;
 }
+.kb-cat-group-title .kb-cat-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.kb-cat-group-title .kb-cat-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+}
+.kb-cat-group-title:hover .kb-cat-actions,
+.kb-cat-group-title .kb-cat-actions:hover {
+    opacity: 1;
+}
+.kb-cat-group-title .kb-cat-add-sub,
+.kb-cat-group-title .kb-cat-edit,
+.kb-cat-group-title .kb-cat-del {
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1;
+}
+.kb-cat-group-title .kb-cat-add-sub { color: #15589B; }
+.kb-cat-group-title .kb-cat-add-sub:hover { background: rgba(21,88,155,0.1); }
+.kb-cat-group-title .kb-cat-edit { color: #15589B; }
+.kb-cat-group-title .kb-cat-edit:hover { background: rgba(21,88,155,0.1); }
+.kb-cat-group-title .kb-cat-del { color: #e63946; }
+.kb-cat-group-title .kb-cat-del:hover { background: rgba(230,57,70,0.1); }
 .cat-arrow {
     font-size: 12px;
     transition: transform 0.2s;
+    flex-shrink: 0;
 }
 .kb-cat-group.collapsed .cat-arrow {
     transform: rotate(-90deg);
@@ -13379,7 +13412,7 @@ html { scroll-behavior: smooth; }
 .kb-cat-sub-list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
     padding: 4px 8px 8px 16px;
 }
 .kb-cat-sub-list .kb-cat-item {
@@ -13388,6 +13421,9 @@ html { scroll-behavior: smooth; }
     border: 1px solid transparent;
     background: transparent;
     border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 .kb-cat-sub-list .kb-cat-item:hover {
     background: #f0f7ff;
@@ -13396,6 +13432,23 @@ html { scroll-behavior: smooth; }
 .kb-cat-sub-list .kb-cat-item.active {
     background: #15589B;
     color: #fff;
+    border-color: #15589B;
+}
+.kb-cat-sub-list .kb-cat-item.active .kb-cat-edit { color: #fff; }
+.kb-cat-sub-list .kb-cat-item.active .kb-cat-del { color: #ffe5e7; }
+.kb-cat-sub-list .kb-cat-item .kb-cat-actions {
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.kb-cat-sub-list .kb-cat-item:hover .kb-cat-actions,
+.kb-cat-sub-list .kb-cat-item.active .kb-cat-actions {
+    opacity: 1;
+}
+.kb-doc-empty-sub {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #999;
+    text-align: center;
 }
 .kb-cat-add-sub {
     width: 100%;
