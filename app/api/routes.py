@@ -3031,13 +3031,31 @@ async def delete_external_kb_document(filename: str, username: str = Depends(req
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ===== 一键生成质量手册（SCskill）=====
+# ===== 一键生成质量手册（SCskill + AI 驱动）=====
 
-@router.post("/generate/manual", summary="一键生成质量手册")
+# 把 SCskill scripts 目录加入 path，以便直接 import
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SCSCRIPTS_DIR = os.path.join(_PROJECT_ROOT, "skills", "SCskill", "scripts")
+import sys as _sys_top
+if _SCSCRIPTS_DIR not in _sys_top.path:
+    _sys_top.path.insert(0, _SCSCRIPTS_DIR)
+
+
+@router.post("/generate/manual", summary="一键生成质量手册（AI 驱动）")
 async def generate_manual_api(request: Request, username: str = Depends(require_auth)):
-    """调用 SCskill 生成质量手册，基于用户填写的体系调研信息"""
-    import subprocess
+    """AI 驱动生成质量手册：
+    1. 从知识库"手册"分类读取模板
+    2. 提取模板结构概览（段落/表格/页眉页脚）
+    3. 用当前选择的 LLM 模型分析"模板+调研数据"，生成结构化修改方案
+    4. 应用修改方案到 docx，保存输出
+    """
+    import asyncio
+    import re as _re
     import sys as _sys
+    import importlib
+    from datetime import datetime
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from app.agent.core import create_llm
 
     body = await request.json()
     survey_data = body.get("survey_data", {})
@@ -3045,77 +3063,102 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
     if not survey_data:
         raise HTTPException(status_code=400, detail="未提供体系调研数据")
 
-    # 定位 SCskill 脚本
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    script_path = os.path.join(project_root, "skills", "SCskill", "scripts", "generate_manual.py")
-
-    if not os.path.exists(script_path):
-        raise HTTPException(status_code=500, detail=f"SCskill 脚本未找到: {script_path}")
+    # 定位 SCskill 模块
+    if not os.path.exists(os.path.join(_SCSCRIPTS_DIR, "generate_manual.py")):
+        raise HTTPException(status_code=500, detail=f"SCskill 模块未找到: {_SCSCRIPTS_DIR}")
 
     # 输出目录
     export_dir = os.path.join(settings.DATA_DIR, "export")
     os.makedirs(export_dir, exist_ok=True)
 
-    # 构造命令
-    survey_json = json.dumps(survey_data, ensure_ascii=False)
-    cmd = [
-        _sys.executable, script_path,
-        "--survey-json", survey_json,
-        "--output-dir", export_dir,
-    ]
-
-    # 注入 LLM 配置到子进程环境变量（让 SCskill 脚本调用 LLM 做智能修改）
-    child_env = os.environ.copy()
-    child_env['LLM_API_KEY'] = getattr(settings, 'LLM_API_KEY', '') or os.environ.get('LLM_API_KEY', '')
-    child_env['LLM_BASE_URL'] = getattr(settings, 'LLM_BASE_URL', '') or os.environ.get('LLM_BASE_URL', '')
-    child_env['LLM_MODEL'] = get_current_model() or getattr(settings, 'LLM_MODEL', 'glm-5.2')
-    child_env['LLM_API_KEY_BACKUP'] = getattr(settings, 'LLM_API_KEY_BACKUP', '')
-    child_env['LLM_BASE_URL_BACKUP'] = getattr(settings, 'LLM_BASE_URL_BACKUP', '')
-    logger.info(f"[SCskill] LLM 配置: model={child_env['LLM_MODEL']}, base_url={child_env['LLM_BASE_URL'][:40]}..., has_key={bool(child_env['LLM_API_KEY'])}")
-
-    logger.info(f"[SCskill] 生成质量手册: user={username}")
+    current_model = get_current_model() or "glm-5.2"
+    logger.info(f"[SCskill] AI 生成质量手册: user={username}, model={current_model}")
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=180,  # AI 调用需要更长时间
-            encoding='utf-8',
-            errors='replace',
-            cwd=project_root,
-            env=child_env,
-        )
+        # 1. import SCskill 模块
+        if 'generate_manual' in _sys.modules:
+            gm = importlib.reload(_sys.modules['generate_manual'])
+        else:
+            gm = importlib.import_module('generate_manual')
 
-        if result.returncode != 0:
-            err = result.stderr[-500:] if result.stderr else "未知错误"
-            raise HTTPException(status_code=500, detail=f"生成失败: {err}")
+        # 2. 查找模板
+        template_path, need_convert = gm.find_template()
+        if template_path is None:
+            raise HTTPException(status_code=500, detail="未找到模板文件。请在内部知识库[手册]分类下上传 .docx/.doc 模板。")
 
-        # 解析输出
-        import re as _re
-        stdout = result.stdout or ""
-        json_match = _re.search(r'\[RESULT_JSON\]\s*(\{.*?\})\s*$', stdout, _re.DOTALL)
-        if json_match:
-            result_data = json.loads(json_match.group(1))
-            if result_data.get("status") == "success":
-                filename = os.path.basename(result_data.get("file_path", ""))
-                download_url = f"/api/v1/documents/export-download/{filename}"
-                return {
-                    "success": True,
-                    "filename": filename,
-                    "download_url": download_url,
-                    "replacements": result_data.get("replacements", {}),
-                }
-            else:
-                raise HTTPException(status_code=500, detail=result_data.get("message", "生成失败"))
+        # 3. .doc → .docx 转换
+        actual_template = template_path
+        if need_convert:
+            logger.info("[SCskill] 模板为 .doc 格式，正在转换为 .docx")
+            converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
+            if not converted:
+                raise HTTPException(status_code=500, detail=".doc 模板转换失败，请安装 LibreOffice 或上传 .docx 模板")
+            actual_template = converted
 
-        raise HTTPException(status_code=500, detail="脚本执行成功但未返回有效结果")
+        # 4. 加载模板
+        from docx import Document
+        doc = await asyncio.to_thread(Document, str(actual_template))
+        logger.info(f"[SCskill] 模板加载完成: {len(doc.paragraphs)} 段, {len(doc.tables)} 表")
+
+        # 5. 提取模板结构概览
+        overview = await asyncio.to_thread(gm.extract_template_overview, doc)
+        overview_text = gm.format_overview_for_llm(overview)
+        survey_text = gm.format_survey_for_llm(survey_data)
+        logger.info(f"[SCskill] 概览: {len(overview['paragraphs'])} 段, "
+                    f"{len(overview['tables'])} 表, 概览文本 {len(overview_text)} 字符")
+
+        # 6. 调用 LLM 生成修改方案（用项目已有的 create_llm，自动跟随用户选择的模型）
+        system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text)
+        # deep_think=True 让 LLM 有更多 token 输出完整 JSON 修改方案
+        llm = create_llm(deep_think=True)
+        logger.info(f"[SCskill] 调用 LLM: model={current_model}")
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+        response = await llm.ainvoke(messages)
+        llm_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+        logger.info(f"[SCskill] LLM 返回 {len(llm_text)} 字符")
+
+        # 7. 解析修改方案
+        modifications = gm.parse_llm_modifications(llm_text)
+        logger.info(f"[SCskill] 解析到 {len(modifications)} 个修改方案")
+        if not modifications:
+            logger.warning(f"[SCskill] 未解析到修改方案，LLM 响应前 300 字: {llm_text[:300]}")
+
+        # 8. 应用修改方案
+        stats = await asyncio.to_thread(gm.apply_modifications, doc, modifications)
+        logger.info(f"[SCskill] 修改应用完成: {stats}")
+
+        # 9. 保存输出
+        company_name = (survey_data.get('sv_company_name') or '企业').strip()
+        safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
+        today_str = datetime.now().strftime("%Y%m%d")
+        filename = f"质量管理手册_{safe_name}_{today_str}.docx"
+        output_path = os.path.join(export_dir, filename)
+        await asyncio.to_thread(doc.save, output_path)
+        logger.info(f"[SCskill] 手册已生成: {output_path}")
+
+        download_url = f"/api/v1/documents/export-download/{filename}"
+        return {
+            "success": True,
+            "filename": filename,
+            "download_url": download_url,
+            "modifications_count": len(modifications),
+            "fill_stats": stats,
+            "model_used": current_model,
+            "replacements": {
+                "paragraphs": stats.get('paragraph', 0),
+                "tables": stats.get('table_cell', 0),
+                "global_replace": stats.get('global_replace', 0),
+                "header_replace": stats.get('header_replace', 0),
+            },
+        }
+
     except HTTPException:
         raise
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="生成超时（120秒）")
     except Exception as e:
-        logger.exception(f"[SCskill] 异常: {e}")
+        logger.exception(f"[SCskill] 生成手册异常: {e}")
         raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
 
 
