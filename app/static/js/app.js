@@ -3899,13 +3899,15 @@ async function addKbCategory() {
     if (!name || !name.trim()) return;
     name = name.trim();
     if (!currentAgentId) { showToast('请先选择智能体'); return; }
+    console.log('[KB] 新建分类:', name, 'agent:', currentAgentId);
     try {
         const resp = await fetch('/api/v1/kb/categories', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+            headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: name })
         });
         const data = await resp.json();
+        console.log('[KB] 新建分类响应:', resp.status, data);
         if (!resp.ok || !data.success) {
             showToast('创建失败：' + (data.detail || data.message || '未知错误'), 3000);
             return;
@@ -3928,6 +3930,7 @@ async function addKbCategory() {
         kbCategories.push(name);
         showToast('已添加分类：' + name, 2000);
     } catch (e) {
+        console.error('[KB] 新建分类异常:', e);
         showToast('创建失败：' + e.message, 3000);
     }
 }
@@ -3936,13 +3939,15 @@ async function delKbCategory(name, event) {
     event.stopPropagation();
     if (!confirm('确认删除分类「' + name + '」？该分类下所有子目录和文件都会被删除！')) return;
     if (!currentAgentId) return;
+    console.log('[KB] 删除分类:', name, 'agent:', currentAgentId);
     try {
         const resp = await fetch('/api/v1/kb/categories', {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+            headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: name })
         });
         const data = await resp.json();
+        console.log('[KB] 删除分类响应:', resp.status, data);
         if (!resp.ok || !data.success) {
             showToast('删除失败：' + (data.detail || data.message || '未知错误'), 3000);
             return;
@@ -3977,13 +3982,15 @@ async function renameKbCategory(oldName, event) {
     const newName = prompt('请输入新的分类名称：', oldName);
     if (!newName || !newName.trim() || newName === oldName) return;
     if (!currentAgentId) return;
+    console.log('[KB] 重命名分类:', oldName, '->', newName.trim());
     try {
         const resp = await fetch('/api/v1/kb/categories', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+            headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, old_category: oldName, new_category: newName.trim() })
         });
         const data = await resp.json();
+        console.log('[KB] 重命名分类响应:', resp.status, data);
         if (!resp.ok || !data.success) {
             showToast('重命名失败：' + (data.detail || data.message || '未知错误'), 3000);
             return;
@@ -4023,13 +4030,15 @@ async function addKbSubcategory() {
     const name = prompt('请输入新子目录名称：');
     if (!name || !name.trim()) return;
     name = name.trim();
+    console.log('[KB] 新建子目录:', name, 'agent:', currentAgentId, 'category:', currentKbCategory);
     try {
         const resp = await fetch('/api/v1/kb/subcategories', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+            headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: currentKbCategory, subcategory: name })
         });
         const data = await resp.json();
+        console.log('[KB] 新建子目录响应:', resp.status, data);
         if (!resp.ok || !data.success) {
             showToast('创建失败：' + (data.detail || data.message || '未知错误'), 3000);
             return;
@@ -4037,6 +4046,7 @@ async function addKbSubcategory() {
         await loadKbSubcategories();
         showToast('已添加子目录：' + name, 2000);
     } catch (e) {
+        console.error('[KB] 新建子目录异常:', e);
         showToast('创建失败：' + e.message, 3000);
     }
 }
@@ -4045,13 +4055,15 @@ async function delKbSubcategory(name, event) {
     event.stopPropagation();
     if (!confirm('确认删除子目录「' + name + '」？该子目录下所有文件都会被删除！')) return;
     if (!currentAgentId) return;
+    console.log('[KB] 删除子目录:', name, 'agent:', currentAgentId, 'category:', currentKbCategory);
     try {
         const resp = await fetch('/api/v1/kb/subcategories', {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+            headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: currentKbCategory, subcategory: name })
         });
         const data = await resp.json();
+        console.log('[KB] 删除子目录响应:', resp.status, data);
         if (!resp.ok || !data.success) {
             showToast('删除失败：' + (data.detail || data.message || '未知错误'), 3000);
             return;
@@ -4075,13 +4087,15 @@ async function renameKbSubcategory(oldName, event) {
     const newName = prompt('请输入新的子目录名称：', oldName);
     if (!newName || !newName.trim() || newName === oldName) return;
     if (!currentAgentId) return;
+    console.log('[KB] 重命名子目录:', oldName, '->', newName.trim());
     try {
         const resp = await fetch('/api/v1/kb/subcategories', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+            headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: currentKbCategory, old_subcategory: oldName, new_subcategory: newName.trim() })
         });
         const data = await resp.json();
+        console.log('[KB] 重命名子目录响应:', resp.status, data);
         if (!resp.ok || !data.success) {
             showToast('重命名失败：' + (data.detail || data.message || '未知错误'), 3000);
             return;
@@ -4124,17 +4138,22 @@ function showKbPage() {
     document.getElementById('kbPageDesc').textContent = '上传和管理' + agentName + '相关文档，系统将自动进行向量化处理';
     // [BUG FIX] 推入历史状态，让浏览器←按钮能回到聊天页
     history.pushState({page: 'kb'}, '');
-    // 进入知识库时，重置子目录选中状态并加载第一列选中分类的子目录
-    currentKbSubcategory = null;
-    // 第三列重置为未选中状态
-    const uploadBtn = document.getElementById('kbFileUploadBtn');
-    if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.style.opacity = '0.5'; uploadBtn.style.cursor = 'not-allowed'; }
-    const fileTitleEl = document.getElementById('kbFileTitle');
-    if (fileTitleEl) fileTitleEl.textContent = '请先选择中间子目录';
-    const docListEl = document.getElementById('kbPageDocList');
-    if (docListEl) docListEl.innerHTML = '<div class="kb-doc-empty">请先在中间选择一个子目录</div>';
-    // 加载第二列子目录
-    loadKbSubcategories();
+    // 进入知识库时，主动选中第一列的第一个分类（触发完整联动）
+    const firstCatBtn = document.querySelector('#kbCatList .kb-cat-item');
+    if (firstCatBtn) {
+        const firstName = firstCatBtn.querySelector('.kb-cat-name') ?
+            firstCatBtn.querySelector('.kb-cat-name').textContent : firstCatBtn.textContent.trim();
+        selectKbCategory(firstName, firstCatBtn);
+    } else {
+        // 没有分类，显示空状态
+        currentKbCategory = '';
+        currentKbSubcategory = null;
+        document.getElementById('kbSubcatTitle').textContent = '请先创建分类';
+        document.getElementById('kbSubcatAddBtn').style.display = 'none';
+        document.getElementById('kbSubcatList').innerHTML = '<div class="kb-doc-empty">请先在左侧创建分类</div>';
+        document.getElementById('kbFileTitle').textContent = '请先选择分类和子目录';
+        document.getElementById('kbPageDocList').innerHTML = '<div class="kb-doc-empty">请先选择分类和子目录</div>';
+    }
     // Setup drag and drop
     setupKbPageDragDrop();
 }

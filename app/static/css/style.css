@@ -13136,9 +13136,13 @@ html { scroll-behavior: smooth; }
     margin-bottom: 16px;
     min-height: 400px;
 }
-/* 三列布局 */
+/* 三列布局：列之间无间隔，共用边框 */
 .kb-layout-three-col {
-    gap: 14px;
+    gap: 0;
+    border: 1px solid #e8e8e8;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
 }
 .kb-cat-col {
     flex: 0 0 200px;
@@ -13149,15 +13153,30 @@ html { scroll-behavior: smooth; }
     flex: 0 0 240px;
     display: flex;
     flex-direction: column;
+    border-left: 1px solid #e8e8e8;
+}
+.kb-cat-col + .kb-subcat-col {
+    border-left: 1px solid #e8e8e8;
 }
 .kb-cat-panel {
     background: #fff;
-    border: 1px solid #e8e8e8;
-    border-radius: 10px;
+    border: none;
+    border-radius: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     height: 100%;
+}
+.kb-cat-col .kb-cat-panel,
+.kb-subcat-col .kb-cat-panel {
+    border-right: none;
+}
+.kb-file-col {
+    border-left: 1px solid #e8e8e8;
+    border-radius: 0;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
 }
 .kb-cat-header {
     display: flex;
@@ -13279,9 +13298,10 @@ html { scroll-behavior: smooth; }
     display: flex;
     flex-direction: column;
     background: #fff;
-    border-radius: 10px;
-    border: 1px solid #e8e8e8;
+    border-radius: 0;
+    border: none;
     overflow: hidden;
+    min-width: 0;
 }
 .kb-file-header {
     display: flex;

@@ -1491,10 +1491,15 @@ async def create_subcategory_api(
 ):
     """新建二级子目录（在指定 agent_id + category 下创建子文件夹）"""
     from app.rag.document import list_subcategories
-    body = await request.json()
-    agent_id = body.get("agent_id", "").strip()
-    category = body.get("category", "").strip()
-    subcategory = body.get("subcategory", "").strip()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
+    subcategory = (body.get("subcategory") or "").strip()
     if not agent_id or not category or not subcategory:
         raise HTTPException(status_code=400, detail="agent_id/category/subcategory 不能为空")
     # 校验名称不含非法字符
@@ -1505,10 +1510,14 @@ async def create_subcategory_api(
     existing = await asyncio.to_thread(list_subcategories, agent_id, category)
     if subcategory in existing:
         raise HTTPException(status_code=400, detail=f"子目录「{subcategory}」已存在")
-    # 创建磁盘文件夹
+    # 创建磁盘文件夹（os.makedirs 会自动创建中间目录 agent_xxx/category）
     sub_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category, subcategory)
-    os.makedirs(sub_dir, exist_ok=True)
-    logger.info(f"[KB] 新建子目录: agent={agent_id}, cat={category}, sub={subcategory}, user={username}")
+    try:
+        os.makedirs(sub_dir, exist_ok=True)
+    except Exception as e:
+        logger.exception(f"[KB] 新建子目录失败: {sub_dir}, err={e}")
+        raise HTTPException(status_code=500, detail=f"创建目录失败: {e}")
+    logger.info(f"[KB] 新建子目录: agent={agent_id}, cat={category}, sub={subcategory}, user={username}, path={sub_dir}")
     return {"success": True, "subcategory": subcategory}
 
 
@@ -1659,9 +1668,14 @@ async def create_category_api(
     username: str = Depends(require_auth),
 ):
     """新建一级分类（在 data/documents/agent_{agent_id}/ 下创建文件夹）"""
-    body = await request.json()
-    agent_id = body.get("agent_id", "").strip()
-    category = body.get("category", "").strip()
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
     if not agent_id or not category:
         raise HTTPException(status_code=400, detail="agent_id 和 category 不能为空")
     import re as _re
@@ -1670,8 +1684,12 @@ async def create_category_api(
     cat_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}", category)
     if os.path.exists(cat_dir):
         raise HTTPException(status_code=400, detail=f"分类「{category}」已存在")
-    os.makedirs(cat_dir, exist_ok=True)
-    logger.info(f"[KB] 新建一级分类: {category}, user={username}")
+    try:
+        os.makedirs(cat_dir, exist_ok=True)
+    except Exception as e:
+        logger.exception(f"[KB] 新建一级分类失败: {cat_dir}, err={e}")
+        raise HTTPException(status_code=500, detail=f"创建目录失败: {e}")
+    logger.info(f"[KB] 新建一级分类: {category}, user={username}, path={cat_dir}")
     return {"success": True, "category": category}
 
 
