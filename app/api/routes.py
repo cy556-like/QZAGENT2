@@ -3166,137 +3166,172 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text)
             await asyncio.sleep(0.1)
 
-            # 步骤 8：调用 LLM
+            # 步骤 8：调用 LLM（流式接收，每条修改立即应用+推送）
             yield await send({
                 "type": "progress",
                 "step": "调用 AI 模型",
-                "message": f"正在调用 AI 模型 [{current_model}] 分析模板并生成修改方案...\n（此步骤通常需要 20-60 秒，请耐心等待）",
+                "message": f"正在调用 AI 模型 [{current_model}] 分析模板并生成修改方案...\n（AI 会逐条输出修改方案，每条都会实时显示在下方）",
                 "progress": 50
             })
+            # 提示用户即将开始接收修改
+            yield await send({
+                "type": "progress",
+                "step": "接收 AI 修改方案",
+                "message": "正在等待 AI 输出修改方案...",
+                "progress": 55
+            })
+            # 在修改日志区显示头部
+            yield await send({
+                "type": "modifications_start",
+                "message": "AI 正在逐条输出修改方案（实时应用中）："
+            })
+
             llm = create_llm(deep_think=True)
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ]
-            try:
-                response = await asyncio.wait_for(llm.ainvoke(messages), timeout=120)
-            except asyncio.TimeoutError:
-                yield await send({
-                    "type": "error",
-                    "message": "AI 模型调用超时（120秒），请重试或切换更快的模型"
-                })
-                return
-            llm_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
-            logger.info(f"[SCskill] LLM 返回 {len(llm_text)} 字符")
 
-            # 步骤 9：解析修改方案
-            yield await send({
-                "type": "progress",
-                "step": "解析修改方案",
-                "message": f"AI 返回 {len(llm_text)} 字符响应，正在解析修改方案...",
-                "progress": 70
-            })
-            modifications = gm.parse_llm_modifications(llm_text)
-            await asyncio.sleep(0.1)
-            if not modifications:
+            # 用 astream 流式接收，每解析出一条 NDJSON 就立即应用+推送
+            stats = {
+                'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
+                'header_replace': 0, 'unknown': 0, 'failed': 0,
+            }
+            modifications_count = 0
+            buffer = ''
+            llm_total_chars = 0
+            last_recv_time = time.time()
+            try:
+                async for chunk in llm.astream(messages):
+                    last_recv_time = time.time()
+                    if not chunk:
+                        continue
+                    if hasattr(chunk, 'content'):
+                        token = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
+                    else:
+                        token = str(chunk)
+                    if not token:
+                        continue
+                    llm_total_chars += len(token)
+                    buffer += token
+
+                    # 按换行符分割，处理完整的行
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        line = line.strip()
+                        if not line:
+                            continue
+                        if line == '===END===':
+                            buffer = ''
+                            break
+                        # 尝试解析这一行为 NDJSON
+                        mod = gm.parse_ndjson_line(line)
+                        if mod is None:
+                            continue
+
+                        # 解析成功，立即应用到 docx 并推送给前端
+                        modifications_count += 1
+                        progress = 55 + min(int(modifications_count * 1.5), 40)  # 55-95
+                        try:
+                            mod_type = mod.get('type', '')
+                            reason = (mod.get('reason', '') or '')[:80]
+
+                            if mod_type == 'paragraph':
+                                idx = int(mod.get('index', -1))
+                                new_text = mod.get('new_text', '')
+                                ok = gm.apply_paragraph_replace(doc, idx, new_text)
+                                if ok:
+                                    stats['paragraph'] += 1
+                                    yield await send({
+                                        "type": "modification",
+                                        "mod_type": "paragraph",
+                                        "location": f"段落 P{idx}",
+                                        "reason": reason,
+                                        "preview": (new_text or '')[:80],
+                                        "progress": progress,
+                                        "index": modifications_count
+                                    })
+                                else:
+                                    stats['failed'] += 1
+                            elif mod_type == 'table_cell':
+                                ti = int(mod.get('table', -1))
+                                ri = int(mod.get('row', -1))
+                                ci = int(mod.get('col', -1))
+                                new_text = mod.get('new_text', '')
+                                ok = gm.apply_table_cell_replace(doc, ti, ri, ci, new_text)
+                                if ok:
+                                    stats['table_cell'] += 1
+                                    yield await send({
+                                        "type": "modification",
+                                        "mod_type": "table_cell",
+                                        "location": f"表格 T{ti} 第{ri+1}行第{ci+1}列",
+                                        "reason": reason,
+                                        "preview": (new_text or '')[:80],
+                                        "progress": progress,
+                                        "index": modifications_count
+                                    })
+                                else:
+                                    stats['failed'] += 1
+                            elif mod_type == 'global_replace':
+                                old = mod.get('old', '')
+                                new = mod.get('new', '')
+                                n = gm.apply_global_replace(doc, old, new)
+                                stats['global_replace'] += n
+                                yield await send({
+                                    "type": "modification",
+                                    "mod_type": "global_replace",
+                                    "location": "全文",
+                                    "reason": reason,
+                                    "preview": f"'{old}' → '{new}'（{n} 处）",
+                                    "progress": progress,
+                                    "index": modifications_count
+                                })
+                            elif mod_type == 'header_replace':
+                                old = mod.get('old', '')
+                                new = mod.get('new', '')
+                                n = gm.apply_header_replace(doc, old, new)
+                                stats['header_replace'] += n
+                                yield await send({
+                                    "type": "modification",
+                                    "mod_type": "header_replace",
+                                    "location": "页眉/页脚",
+                                    "reason": reason,
+                                    "preview": f"'{old}' → '{new}'（{n} 处）",
+                                    "progress": progress,
+                                    "index": modifications_count
+                                })
+                            else:
+                                stats['unknown'] += 1
+                        except Exception as e:
+                            stats['failed'] += 1
+                            logger.warning(f"[SCskill] 修改 #{modifications_count} 失败: {e}")
+
+                    # 检查是否超时（基于 last_recv_time 静默超时，不强制中断）
+                    # 这里不主动中断，让 langchain 内部超时机制处理
+            except Exception as stream_err:
+                err_msg = str(stream_err)
+                if 'timeout' in err_msg.lower() or 'timed out' in err_msg.lower():
+                    yield await send({
+                        "type": "error",
+                        "message": "AI 模型调用超时，请重试或切换更快的模型"
+                    })
+                    return
+                logger.exception(f"[SCskill] LLM 流式接收异常: {stream_err}")
+                # 不直接 return，继续往下走（可能已经收到部分修改）
+            logger.info(f"[SCskill] LLM 流式接收完成，共 {llm_total_chars} 字符，{modifications_count} 个修改方案")
+
+            if modifications_count == 0:
                 yield await send({
                     "type": "error",
                     "message": "AI 未能生成有效的修改方案，请重试或更换模型"
                 })
                 return
 
-            # 步骤 10：应用修改方案（实时推送每一条修改）
-            yield await send({
-                "type": "progress",
-                "step": "应用修改方案",
-                "message": f"正在应用 {len(modifications)} 个修改方案到模板...",
-                "progress": 75
-            })
-
-            # 自定义 apply 函数，每应用一条就推送进度
-            stats = {
-                'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
-                'header_replace': 0, 'unknown': 0, 'failed': 0,
-            }
-            total = len(modifications)
-            for i, mod in enumerate(modifications):
-                try:
-                    mod_type = mod.get('type', '')
-                    reason = (mod.get('reason', '') or '')[:80]
-                    progress = 75 + int((i / max(total, 1)) * 20)  # 75-95
-
-                    if mod_type == 'paragraph':
-                        idx = int(mod.get('index', -1))
-                        new_text = mod.get('new_text', '')
-                        ok = gm.apply_paragraph_replace(doc, idx, new_text)
-                        if ok:
-                            stats['paragraph'] += 1
-                            preview = (new_text or '')[:60]
-                            yield await send({
-                                "type": "modification",
-                                "mod_type": "paragraph",
-                                "location": f"段落 P{idx}",
-                                "reason": reason,
-                                "preview": preview,
-                                "progress": progress
-                            })
-                        else:
-                            stats['failed'] += 1
-                    elif mod_type == 'table_cell':
-                        ti = int(mod.get('table', -1))
-                        ri = int(mod.get('row', -1))
-                        ci = int(mod.get('col', -1))
-                        new_text = mod.get('new_text', '')
-                        ok = gm.apply_table_cell_replace(doc, ti, ri, ci, new_text)
-                        if ok:
-                            stats['table_cell'] += 1
-                            yield await send({
-                                "type": "modification",
-                                "mod_type": "table_cell",
-                                "location": f"表格 T{ti} 第{ri+1}行第{ci+1}列",
-                                "reason": reason,
-                                "preview": (new_text or '')[:60],
-                                "progress": progress
-                            })
-                        else:
-                            stats['failed'] += 1
-                    elif mod_type == 'global_replace':
-                        old = mod.get('old', '')
-                        new = mod.get('new', '')
-                        n = gm.apply_global_replace(doc, old, new)
-                        stats['global_replace'] += n
-                        yield await send({
-                            "type": "modification",
-                            "mod_type": "global_replace",
-                            "location": "全文",
-                            "reason": reason,
-                            "preview": f"'{old}' → '{new}'（{n} 处）",
-                            "progress": progress
-                        })
-                    elif mod_type == 'header_replace':
-                        old = mod.get('old', '')
-                        new = mod.get('new', '')
-                        n = gm.apply_header_replace(doc, old, new)
-                        stats['header_replace'] += n
-                        yield await send({
-                            "type": "modification",
-                            "mod_type": "header_replace",
-                            "location": "页眉/页脚",
-                            "reason": reason,
-                            "preview": f"'{old}' → '{new}'（{n} 处）",
-                            "progress": progress
-                        })
-                    else:
-                        stats['unknown'] += 1
-                except Exception as e:
-                    stats['failed'] += 1
-                    logger.warning(f"[SCskill] 修改 #{i} 失败: {e}")
-
-            # 步骤 11：保存输出
+            # 步骤 9：保存输出
             yield await send({
                 "type": "progress",
                 "step": "保存文件",
-                "message": "正在保存生成的高质量手册文件...",
+                "message": f"AI 已输出 {modifications_count} 个修改方案全部应用完成，正在保存文件...",
                 "progress": 97
             })
             company_name = (survey_data.get('sv_company_name') or '企业').strip()

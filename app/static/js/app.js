@@ -3565,9 +3565,16 @@ function generateDocument(type) {
                                 progressBarEl.style.width = data.progress + '%';
                             }
                             messageEl.textContent = data.message || '';
-                            // 在修改日志区上方提示"正在应用修改方案"
+                            // 应用修改阶段时显示头部（兼容旧版）
                             if (data.step === '应用修改方案' && !modsEl.querySelector('.gen-mods-header')) {
                                 modsEl.innerHTML = '<div class="gen-mods-header">正在应用的修改：</div><div class="gen-mods-list"></div>';
+                            }
+                        } else if (data.type === 'modifications_start') {
+                            // 新增：开始接收修改方案时立即显示头部
+                            if (!modsEl.querySelector('.gen-mods-header')) {
+                                modsEl.innerHTML = '<div class="gen-mods-header">' + (data.message || '正在应用的修改：') + '</div><div class="gen-mods-list"></div>';
+                            } else if (data.message) {
+                                modsEl.querySelector('.gen-mods-header').textContent = data.message;
                             }
                         } else if (data.type === 'modification') {
                             receivedCount++;
