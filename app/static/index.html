@@ -367,22 +367,38 @@
             </div>
             <div class="survey-body">
 
-                <!-- Section 1: 基本信息 -->
-                <div class="survey-section">
-                    <h3 class="survey-section-title">一、基本信息</h3>
-                    <div class="survey-field">
-                        <label>1. 公司名称 <span class="required">*</span></label>
-                        <input type="text" id="sv_company_name" placeholder="请输入公司全称">
-                    </div>
-                    <div class="survey-field">
-                        <label>2. 需要取得的证书 <span class="required">*</span></label>
-                        <div class="checkbox-group">
-                            <label class="checkbox-item"><input type="checkbox" value="ISO9001" class="sv_cert"> ISO9001</label>
-                            <label class="checkbox-item"><input type="checkbox" value="IATF16949" class="sv_cert"> IATF16949</label>
-                            <label class="checkbox-item"><input type="checkbox" value="ISO14001" class="sv_cert"> ISO14001</label>
-                            <label class="checkbox-item"><input type="checkbox" value="ISO45001" class="sv_cert"> ISO45001</label>
+                <!-- 第一行：基本信息（左）+ 上传手册（右）两列布局 -->
+                <div class="survey-row-two-col">
+                    <!-- Section 1: 基本信息 -->
+                    <div class="survey-section survey-section-half">
+                        <h3 class="survey-section-title">一、基本信息</h3>
+                        <div class="survey-field">
+                            <label>1. 公司名称 <span class="required">*</span></label>
+                            <input type="text" id="sv_company_name" placeholder="请输入公司全称">
                         </div>
-                        <input type="text" id="sv_cert_other" placeholder="其他证书请填写" style="margin-top:8px;">
+                        <div class="survey-field">
+                            <label>2. 需要取得的证书 <span class="required">*</span></label>
+                            <div class="checkbox-group">
+                                <label class="checkbox-item"><input type="checkbox" value="ISO9001" class="sv_cert"> ISO9001</label>
+                                <label class="checkbox-item"><input type="checkbox" value="IATF16949" class="sv_cert"> IATF16949</label>
+                                <label class="checkbox-item"><input type="checkbox" value="ISO14001" class="sv_cert"> ISO14001</label>
+                                <label class="checkbox-item"><input type="checkbox" value="ISO45001" class="sv_cert"> ISO45001</label>
+                            </div>
+                            <input type="text" id="sv_cert_other" placeholder="其他证书请填写" style="margin-top:8px;">
+                        </div>
+                    </div>
+
+                    <!-- 上传相关手册（右半） -->
+                    <div class="survey-section survey-section-half survey-upload-section">
+                        <h3 class="survey-section-title">📎 上传相关手册（选填）</h3>
+                        <p class="survey-upload-hint">上传质量手册、体系文件等文档，AI 将自动识别并填充表单中对应的信息</p>
+                        <div class="survey-upload-zone" id="surveyUploadZone" onclick="document.getElementById('surveyFileInput').click()">
+                            <div class="survey-upload-icon">📤</div>
+                            <div class="survey-upload-text">点击上传文件</div>
+                            <div class="survey-upload-formats">支持 PDF、DOCX、DOC、TXT 格式</div>
+                        </div>
+                        <input type="file" id="surveyFileInput" accept=".pdf,.docx,.doc,.txt" style="display:none;" onchange="onSurveyFileSelected(event)">
+                        <div class="survey-upload-status" id="surveyUploadStatus" style="display:none;"></div>
                     </div>
                 </div>
 
@@ -504,19 +520,6 @@
                         <div class="survey-field"><label>填写人姓名 <span class="required">*</span></label><input type="text" id="sv_filler_name" placeholder="姓名"></div>
                         <div class="survey-field"><label>填写人手机 <span class="required">*</span></label><input type="text" id="sv_filler_phone" placeholder="手机号码"></div>
                     </div>
-                </div>
-
-                <!-- 上传相关手册 -->
-                <div class="survey-section survey-upload-section">
-                    <h3 class="survey-section-title">📎 上传相关手册（选填）</h3>
-                    <p class="survey-upload-hint">上传质量手册、体系文件等文档，AI 将自动识别并填充表单中对应的信息</p>
-                    <div class="survey-upload-zone" id="surveyUploadZone" onclick="document.getElementById('surveyFileInput').click()">
-                        <div class="survey-upload-icon">📤</div>
-                        <div class="survey-upload-text">点击上传文件</div>
-                        <div class="survey-upload-formats">支持 PDF、DOCX、DOC、TXT 格式</div>
-                    </div>
-                    <input type="file" id="surveyFileInput" accept=".pdf,.docx,.doc,.txt" style="display:none;" onchange="onSurveyFileSelected(event)">
-                    <div class="survey-upload-status" id="surveyUploadStatus" style="display:none;"></div>
                 </div>
 
                 <!-- 提交按钮 -->
