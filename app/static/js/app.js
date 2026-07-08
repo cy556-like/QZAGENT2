@@ -3468,6 +3468,89 @@ function generateDocument(type) {
     };
     const typeName = typeMap[type] || type;
     
+    // 一键生成手册：调用 SCskill API
+    if (type === 'manual') {
+        const surveyData = getSurveyData();
+        if (!surveyData) {
+            showToast('请先点击"填写体系调研"填写企业信息', 3000);
+            showSurveyForm();
+            return;
+        }
+        const surveyPage = document.getElementById('surveyPage');
+        if (surveyPage && surveyPage.style.display !== 'none') {
+            hideSurveyForm();
+        }
+        document.getElementById('chatContent').classList.remove('centered');
+        const bubble = createStreamingBubble();
+        
+        (async () => {
+            if (isLoading) return;
+            isLoading = true;
+            if (!currentChatId) {
+                await createNewChat();
+                if (!currentChatId) { isLoading = false; return; }
+            }
+            try {
+                // 先调 SCskill API 生成文件
+                const genResp = await fetch('/api/v1/generate/manual', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+                    body: JSON.stringify({ survey_data: surveyData })
+                });
+                const genData = await genResp.json();
+                
+                if (genData.success) {
+                    // 文件生成成功，让 AI 在对话中说明
+                    const surveyText = formatSurveyDataForAI();
+                    await streamChat('/api/v1/chat/stream', {
+                        method: 'POST',
+                        headers: apiHeaders(),
+                        body: JSON.stringify({
+                            message: '用户已通过SCskill生成质量手册。文件名：' + genData.filename + '。请简要告知用户手册已生成，可点击下载链接下载。下载链接：' + genData.download_url,
+                            session_id: currentChatId,
+                            web_search: false,
+                            mode: currentMode,
+                            deep_think: false,
+                            skill: 'manual',
+                            agent_id: currentAgentId || '',
+                            agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : ''
+                        })
+                    }, bubble);
+                    
+                    // 在气泡末尾添加下载按钮
+                    const downloadHtml = '<br><br><a href="' + genData.download_url + '" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载质量手册</a>';
+                    bubble.querySelector('.bubble').innerHTML += downloadHtml;
+                    
+                    await loadChatList();
+                    scrollToBottom();
+                } else {
+                    // 生成失败，用 AI 回答
+                    await streamChat('/api/v1/chat/stream', {
+                        method: 'POST',
+                        headers: apiHeaders(),
+                        body: JSON.stringify({
+                            message: '请' + typeName + '。\n\n' + surveyText + '\n\n基于以上体系调研信息，生成完整的' + typeName + '。',
+                            session_id: currentChatId,
+                            web_search: webSearchEnabled,
+                            mode: currentMode,
+                            deep_think: deepThinkEnabled,
+                            skill: 'manual',
+                            agent_id: currentAgentId || '',
+                            agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : ''
+                        })
+                    }, bubble);
+                    await loadChatList();
+                    scrollToBottom();
+                }
+            } catch (e) {
+                console.error('[生成手册] 失败:', e);
+            } finally {
+                resetStreamingUI();
+            }
+        })();
+        return;
+    }
+    
     // 付费功能：三层次文件、记录表格、不合格项整改
     if (type === 'third-level' || type === 'record' || type === 'rectification') {
         const surveyData = getSurveyData();
