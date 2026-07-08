@@ -12772,34 +12772,47 @@ html { scroll-behavior: smooth; }
 .sidebar-gen-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-top: 8px;
+    gap: 4px;
+    padding: 4px 8px 8px;
+    margin-top: 4px;
 }
 .sidebar-gen-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    background: #f0f7ff;
-    border: 1px solid #c5d9f0;
-    border-radius: 8px;
+    gap: 11px;
+    padding: 11px 14px;
+    background: #f0f0f0;
+    border: 1px solid #c8c8c8;
+    border-radius: 10px;
     color: #15589B;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
+    margin-bottom: 4px;
     text-align: left;
     width: 100%;
+    justify-content: center;  /* 文字居中（参考 JLAGENT agent-item 视觉风格） */
 }
 .sidebar-gen-btn:hover {
-    background: #15589B;
-    color: #FFFFFF;
+    background: #eeeeef;
     border-color: #15589B;
-    transform: translateX(2px);
-    box-shadow: 0 2px 8px rgba(21, 88, 155, 0.2);
+    color: #15589B;
 }
 .sidebar-gen-btn:active {
-    transform: translateX(0) scale(0.98);
+    background: #e8e8e9;
+    border-color: #0F467A;
+    transform: scale(0.99);
+}
+.sidebar-gen-btn.sidebar-agent-btn {
+    /* 第一个按钮（填写体系调研）特殊样式：激活态深蓝底白字 */
+    background: #f0f0f0;
+    border-color: #c8c8c8;
+    color: #15589B;
+}
+.sidebar-gen-btn.sidebar-agent-btn:hover {
+    background: #e8e8e9;
+    border-color: #15589B;
 }
 
 
