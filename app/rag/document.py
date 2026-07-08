@@ -1300,31 +1300,61 @@ def load_document(file_path: str) -> list:
     elif ext == ".docx":
         return _load_docx_with_tables(file_path)
     elif ext == ".doc":
-        # .doc 格式：用 Docx2txtLoader 尝试加载，失败则用 textract
+        # .doc 格式：先转成 .docx 再用 _load_docx_with_tables 读取
+        import subprocess
+        import tempfile
+        import shutil as _shutil
+        
+        # 方法1：用 LibreOffice 转换
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                result = subprocess.run(
+                    ['soffice', '--headless', '--convert-to', 'docx', file_path, '--outdir', tmp_dir],
+                    capture_output=True, text=True, timeout=60
+                )
+                if result.returncode == 0:
+                    # 找到转换后的 .docx 文件
+                    basename = os.path.splitext(os.path.basename(file_path))[0]
+                    converted_path = os.path.join(tmp_dir, basename + '.docx')
+                    if os.path.exists(converted_path):
+                        docs = _load_docx_with_tables(converted_path)
+                        # 更新 source 为原始文件名
+                        for doc in docs:
+                            doc.metadata["source"] = file_path
+                        return docs
+        except Exception as e:
+            logger.warning(f"LibreOffice 转换 .doc 失败: {e}")
+        
+        # 方法2：用 Windows Word COM 对象（服务器上有 Word 时）
+        try:
+            import win32com.client
+            import pythoncom
+            pythoncom.CoInitialize()
+            word = win32com.client.Dispatch("Word.Application")
+            word.Visible = False
+            doc_obj = word.Documents.Open(file_path)
+            with tempfile.NamedTemporaryFile(suffix='.docx', delete=False, mode='wb') as tmp:
+                tmp_docx = tmp.name
+            doc_obj.SaveAs2(tmp_docx, FileFormat=16)  # 16 = wdFormatXMLDocument (.docx)
+            doc_obj.Close()
+            word.Quit()
+            pythoncom.CoUninitialize()
+            docs = _load_docx_with_tables(tmp_docx)
+            for doc in docs:
+                doc.metadata["source"] = file_path
+            os.unlink(tmp_docx)
+            return docs
+        except Exception as e:
+            logger.warning(f"Word COM 转换 .doc 失败: {e}")
+        
+        # 方法3：用 Docx2txtLoader（可能对部分 .doc 有效）
         try:
             loader = Docx2txtLoader(file_path)
             return loader.load()
         except Exception:
-            # Docx2txtLoader 可能不支持旧版 .doc，用 textract 兜底
-            try:
-                import textract
-                text = textract.process(file_path).decode('utf-8')
-                from langchain_core.documents import Document
-                return [Document(page_content=text, metadata={"source": file_path})]
-            except Exception:
-                # 最终兜底：用 antiword 或 LibreOffice
-                import subprocess
-                try:
-                    result = subprocess.run(
-                        ['antiword', file_path],
-                        capture_output=True, text=True, timeout=30
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        from langchain_core.documents import Document
-                        return [Document(page_content=result.stdout, metadata={"source": file_path})]
-                except Exception:
-                    pass
-                raise ValueError(f"无法读取 .doc 文件: {file_path}，请转换为 .docx 格式后上传")
+            pass
+        
+        raise ValueError(f"无法读取 .doc 文件: {file_path}，请转换为 .docx 格式后上传")
     elif ext in (".xlsx", ".xls"):
         return load_xlsx_document(file_path)
     elif ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
