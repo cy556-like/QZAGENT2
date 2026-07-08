@@ -1046,15 +1046,15 @@ async function doLogin() {
                 allChats = [];
                 currentChatId = null;
                 modeChatId = { agent: null, chat: null };
-                // 清空旧的 agentActiveChatId
                 Object.keys(agentActiveChatId).forEach(k => delete agentActiveChatId[k]);
-                loadChatList();
+                // 清空侧边栏对话列表（避免闪现旧数据）
+                const chatListEl = document.getElementById('chatList');
+                if (chatListEl) chatListEl.innerHTML = '';
                 loadModels();
-                await syncAgentsFromServer(true);  // [#12] 登录时强制同步一次，内部已调用 rebuildChatIdsFromServer（会GET /chats）
+                await syncAgentsFromServer(true);
                 renderMyAgents();
                 updateKbUploadVisibility();
                 updateHeaderKbVisibility();
-                // [#14] 默认选中第一个智能体
                 if (!currentAgentId && myAgents.length > 0) {
                     currentAgentId = myAgents[0].id;
                     currentMode = 'agent';
@@ -1062,24 +1062,18 @@ async function doLogin() {
                     updateGenButtonsVisibility();
                     updateHeaderKbVisibility();
                 }
-                // 检查是否有历史对话
+                // 先加载对话列表（await 确保完成后再判断）
+                await loadChatList();
+                // 再检查是否有历史对话
                 const modeChats = getModeChats();
                 if (modeChats && modeChats.length > 0) {
-                    // 有历史对话 → 加载最新的那个对话
                     currentChatId = modeChats[0].chat_id;
                     modeChatId['agent'] = currentChatId;
                     renderChatList();
                     await loadChatHistory(currentChatId);
                 } else {
-                    // 没有历史对话 → 检查是否已填写体系调研
-                    const surveyData = localStorage.getItem('surveyData');
-                    if (!surveyData) {
-                        // 未填写 → 显示填写表单
-                        setTimeout(() => showSurveyForm(), 100);
-                    } else {
-                        // 没有历史对话 → 无论是否填过调研，都显示填表页
-                        setTimeout(() => showSurveyForm(), 100);
-                    }
+                    // 没有历史对话 → 显示填表页
+                    setTimeout(() => showSurveyForm(), 100);
                 }
             }, 500);
         } else { msgEl.className = 'msg-box error'; msgEl.textContent = data.message || '登录失败'; }
