@@ -231,12 +231,12 @@
 
             <div class="sidebar-section-title" id="agentsSectionTitle" style="display:none;"><span class="section-title-icon">👉</span><span class="section-title-text">请点击：</span></div>
             <div class="sidebar-gen-list" id="sidebarGenList" style="padding:0 12px;">
-                <button class="sidebar-gen-btn sidebar-agent-btn" onclick="showSurveyForm()" title="填写企业体系调研信息">📋 填写体系调研</button>
-                <button class="sidebar-gen-btn" onclick="generateDocument('manual')" title="基于体系调研信息生成质量管理手册">📄 一键生成手册</button>
-                <button class="sidebar-gen-btn" onclick="generateDocument('procedure')" title="基于体系调研信息生成程序文件">📋 一键生成程序文件</button>
-                <button class="sidebar-gen-btn" onclick="generateDocument('third-level')" title="基于体系调研信息生成三层次文件">📝 一键生成三层次文件</button>
-                <button class="sidebar-gen-btn" onclick="generateDocument('record')" title="基于体系调研信息生成记录表格">📊 一键生成记录表格</button>
-                <button class="sidebar-gen-btn" onclick="generateDocument('rectification')" title="基于体系调研信息生成不合格项整改报告">🔧 不合格项整改</button>
+                <button class="sidebar-gen-btn sidebar-agent-btn" onclick="showSurveyForm()" title="填写企业体系调研信息">填写体系调研</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('manual')" title="基于体系调研信息生成质量管理手册">一键生成手册</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('procedure')" title="基于体系调研信息生成程序文件">一键生成程序文件</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('third-level')" title="基于体系调研信息生成三层次文件">一键生成三层次文件</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('record')" title="基于体系调研信息生成记录表格">一键生成记录表格</button>
+                <button class="sidebar-gen-btn" onclick="generateDocument('rectification')" title="基于体系调研信息生成不合格项整改报告">不合格项整改</button>
             </div>
         </div>
             <div class="chat-list" id="chatList" role="list" aria-label="会话列表"></div>
@@ -260,9 +260,9 @@
                 <h1 id="chatTitle">体系智能体</h1>
 
 
-                <button class="header-kb-btn" id="headerKbBtn" onclick="showKbPage()" title="企业内部体系文件" aria-label="企业内部体系文件" style="display:inline-flex;"><span class="kb-btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span><span class="kb-btn-text">企业内部体系文件</span></button><button class="header-kb-btn" id="headerExternalKbBtn" onclick="showExternalKbPage()" title="外部知识库" aria-label="外部知识库" style="display:none;"><span class="kb-btn-icon">🌐</span><span class="kb-btn-text">外部知识库</span></button>
+                <button class="header-kb-btn" id="headerKbBtn" onclick="showKbPage()" title="企业内部文件" aria-label="企业内部文件" style="display:inline-flex;"><span class="kb-btn-text">企业内部文件</span></button><button class="header-kb-btn" id="headerExternalKbBtn" onclick="showExternalKbPage()" title="全质知识库" aria-label="全质知识库" style="display:none;"><span class="kb-btn-text">全质知识库</span></button>
 
-                <div class="skills-wrapper" id="skillsWrapper" style="display:none;"><button class="header-kb-btn" id="headerSkillsBtn" onclick="toggleSkillsDropdown(event)" title="技能" aria-label="技能" aria-haspopup="true"><span class="kb-btn-icon">🛠️</span><span class="kb-btn-text">质量工具箱Skill</span></button><div class="skills-dropdown" id="skillsDropdown" role="menu"><button onclick="selectSkill('8d-skill')" role="menuitem">📋 8D工作法（示例）</button><button onclick="selectSkill('pfmea-dfmea-skill')" role="menuitem" >📐 FMEA分析（示例）</button><button onclick="showDevSkillToast('标准条款精准检索')" role="menuitem" >📚 标准条款精准检索</button><button onclick="showDevSkillToast('文件编号匹配检查')" role="menuitem" >📄 文件编号匹配检查</button><button onclick="showDevSkillToast('海龟图生成')" role="menuitem" >🐢 海龟图生成</button><button onclick="showDevSkillToast('质量根因分析')" role="menuitem" >🔍 质量根因分析</button><button onclick="showDevSkillToast('质量成本计算')" role="menuitem" >💰 质量成本计算</button><button onclick="showDevSkillToast('甘特图规划')" role="menuitem" >📊 甘特图规划</button><button onclick="showDevSkillToast('过程能力指数Cpk/Ppk计算')" role="menuitem" >📈 过程能力指数Cpk/Ppk计算</button><button onclick="showDevSkillToast('人机料法环分析')" role="menuitem" >⚙️ 人机料法环分析</button><button onclick="showDevSkillToast('变化点识别与风险评估')" role="menuitem" >⚠️ 变化点识别与风险评估</button><button onclick="showDevSkillToast('问题描述5W2H')" role="menuitem" >📝 问题描述5W2H</button><button onclick="showDevSkillToast('原因验证与再现试验方案')" role="menuitem" >🔬 原因验证与再现试验方案</button><button onclick="showDevSkillToast('纠正与预防措施有效性')" role="menuitem" >✅ 纠正与预防措施有效性</button><button onclick="showDevSkillToast('体系差距分析')" role="menuitem" >🎯 体系差距分析</button></div></div>
+                <div class="skills-wrapper" id="skillsWrapper" style="display:none;"><button class="header-kb-btn" id="headerSkillsBtn" onclick="toggleSkillsDropdown(event)" title="质量skill" aria-label="质量skill" aria-haspopup="true"><span class="kb-btn-text">质量skill</span></button><div class="skills-dropdown" id="skillsDropdown" role="menu"><button onclick="selectSkill('8d-skill')" role="menuitem">📋 8D工作法（示例）</button><button onclick="selectSkill('pfmea-dfmea-skill')" role="menuitem" >📐 FMEA分析（示例）</button><button onclick="showDevSkillToast('标准条款精准检索')" role="menuitem" >📚 标准条款精准检索</button><button onclick="showDevSkillToast('文件编号匹配检查')" role="menuitem" >📄 文件编号匹配检查</button><button onclick="showDevSkillToast('海龟图生成')" role="menuitem" >🐢 海龟图生成</button><button onclick="showDevSkillToast('质量根因分析')" role="menuitem" >🔍 质量根因分析</button><button onclick="showDevSkillToast('质量成本计算')" role="menuitem" >💰 质量成本计算</button><button onclick="showDevSkillToast('甘特图规划')" role="menuitem" >📊 甘特图规划</button><button onclick="showDevSkillToast('过程能力指数Cpk/Ppk计算')" role="menuitem" >📈 过程能力指数Cpk/Ppk计算</button><button onclick="showDevSkillToast('人机料法环分析')" role="menuitem" >⚙️ 人机料法环分析</button><button onclick="showDevSkillToast('变化点识别与风险评估')" role="menuitem" >⚠️ 变化点识别与风险评估</button><button onclick="showDevSkillToast('问题描述5W2H')" role="menuitem" >📝 问题描述5W2H</button><button onclick="showDevSkillToast('原因验证与再现试验方案')" role="menuitem" >🔬 原因验证与再现试验方案</button><button onclick="showDevSkillToast('纠正与预防措施有效性')" role="menuitem" >✅ 纠正与预防措施有效性</button><button onclick="showDevSkillToast('体系差距分析')" role="menuitem" >🎯 体系差距分析</button></div></div>
 
 
             </div>
@@ -271,10 +271,10 @@
             <div class="header-actions">
 
 
-                <button class="header-kb-btn" id="headerHelpBtn" onclick="showHelpPage()" title="使用指南" aria-label="帮助" style="display:inline-flex;"><span class="kb-btn-icon">❓</span><span class="kb-btn-text">帮助</span></button><select class="model-select" id="modelSelect" onchange="switchModel()" title="切换模型" aria-label="选择模型"></select>
+                <button class="header-kb-btn" id="headerHelpBtn" onclick="showHelpPage()" title="使用指南" aria-label="帮助" style="display:inline-flex;"><span class="kb-btn-text">帮助</span></button><select class="model-select" id="modelSelect" onchange="switchModel()" title="切换模型" aria-label="选择模型"></select>
 
 
-                <div class="export-wrapper"><button class="header-btn" onclick="toggleExportDropdown()" title="导出对话" aria-label="导出对话" aria-haspopup="true">📥 导出对话</button><div class="export-dropdown" id="exportDropdown" role="menu"><button onclick="exportChat('docx')" role="menuitem">📝 Word</button><button onclick="exportChat('pdf')" role="menuitem">📄 PDF</button><button onclick="exportChat('md')" role="menuitem">📋 Markdown</button></div></div>
+                <div class="export-wrapper"><button class="header-btn" onclick="toggleExportDropdown()" title="导出对话" aria-label="导出对话" aria-haspopup="true">导出对话</button><div class="export-dropdown" id="exportDropdown" role="menu"><button onclick="exportChat('docx')" role="menuitem">📝 Word</button><button onclick="exportChat('pdf')" role="menuitem">📄 PDF</button><button onclick="exportChat('md')" role="menuitem">📋 Markdown</button></div></div>
 
 
                 <div class="header-user-info">
@@ -308,7 +308,7 @@
             <div class="kb-page-header">
                 <button class="kb-back-btn" onclick="hideKbPage()" title="返回对话" aria-label="返回对话">← 返回对话</button>
                 <div class="kb-page-title-area">
-                    <h2 id="kbPageTitle">企业内部体系文件</h2>
+                    <h2 id="kbPageTitle">企业内部文件</h2>
                     <p id="kbPageDesc" class="kb-page-desc">管理企业体系文件，按分类查看和上传文档</p>
                 </div>
             </div>
@@ -549,7 +549,7 @@
                     <p><strong>4. 一键生成三层次文件：</strong>针对具体业务过程，生成作业指导书和操作规范，确保文件体系完整闭环。</p>
                     <p><strong>5. 一键生成记录表格：</strong>自动匹配各程序文件所需的记录表单，支持下载和编辑，方便日常使用。</p>
                     <p><strong>6. 不合格项整改：</strong>对内外审发现的不合格项进行智能归因分析，生成8D整改报告并跟踪闭环。</p>
-                    <p style="margin-top:20px; padding:12px; background:#f0f7ff; border-radius:8px; color:#15589B;"><strong>使用提示：</strong>左侧选择对应智能体后，在输入框中描述您的需求即可。支持上传文件、联网搜索和深度思考模式。企业内部体系文件可上传到对应智能体的知识库中，外部知识库提供行业标准和法规参考。</p>
+                    <p style="margin-top:20px; padding:12px; background:#f0f7ff; border-radius:8px; color:#15589B;"><strong>使用提示：</strong>左侧选择对应智能体后，在输入框中描述您的需求即可。支持上传文件、联网搜索和深度思考模式。企业内部文件可上传到对应智能体的知识库中，全质知识库提供行业标准和法规参考。</p>
                 </div>
             </div>
         </div>
@@ -558,7 +558,7 @@
             <div class="kb-page-header">
                 <button class="kb-back-btn" onclick="hideExternalKbPage()" title="返回对话" aria-label="返回对话">← 返回对话</button>
                 <div class="kb-page-title-area">
-                    <h2>外部知识库</h2>
+                    <h2>全质知识库</h2>
                     <p class="kb-page-desc">行业标准、法规、技术规范等外部参考资料</p>
                 </div>
             </div>
