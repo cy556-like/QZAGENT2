@@ -2213,7 +2213,7 @@ def _search_external_kb(query: str, top_k: int = 3) -> list[dict]:
             if content_key in seen:
                 continue
             seen.add(content_key)
-            source = doc.metadata.get('source', '外部知识库')
+            source = doc.metadata.get('source', '全质知识库')
             filename = os.path.basename(source) if source else '未知'
             results.append({
                 'content': doc.page_content,

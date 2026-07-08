@@ -527,8 +527,8 @@ def list_documents_tool() -> str:
         return f"【文档列表】两个知识库均暂无文档（内部: agent_id={current_aid}，外部: external_kb）。请先上传文档。"
 
     output = "【文档列表】当前可访问 2 个知识库：\n\n"
-    
-    output += f"一、企业内部体系文件（{len(docs)} 个文档）：\n"
+
+    output += f"一、企业内部文件（{len(docs)} 个文档）：\n"
     if docs:
         for i, doc in enumerate(docs, 1):
             ext = doc.rsplit('.', 1)[-1].lower() if '.' in doc else ''
@@ -536,8 +536,8 @@ def list_documents_tool() -> str:
             output += f"  {i}. {doc}（{type_label}）\n"
     else:
         output += "  （暂无文档）\n"
-    
-    output += f"\n二、外部知识库（{len(ext_docs)} 个文档）：\n"
+
+    output += f"\n二、全质知识库（{len(ext_docs)} 个文档）：\n"
     if ext_docs:
         for i, doc in enumerate(ext_docs, 1):
             ext = doc.rsplit('.', 1)[-1].lower() if '.' in doc else ''

@@ -2947,7 +2947,7 @@ async def get_agents(authorization: str = Header(None)):
 
 # ===== 外部知识库上传 =====
 
-@router.post("/external-kb/upload", summary="上传文档到外部知识库")
+@router.post("/external-kb/upload", summary="上传文档到全质知识库")
 async def external_kb_upload(file: UploadFile = File(...), category: str = Form(""), username: str = Depends(require_auth)):
     """上传文档到外部知识库（external_kb collection），按子分类存储"""
     allowed_ext = {".pdf", ".txt", ".md", ".docx", ".xlsx", ".xls", ".doc"}
@@ -2984,7 +2984,7 @@ async def external_kb_upload(file: UploadFile = File(...), category: str = Form(
         raise HTTPException(status_code=500, detail=f"索引失败: {str(e)}")
 
 
-@router.get("/external-kb/documents", summary="列出外部知识库文档")
+@router.get("/external-kb/documents", summary="列出全质知识库文档")
 async def external_kb_documents(category: str = Query(None), username: str = Depends(require_auth)):
     """列出外部知识库的所有文档（按子分类过滤）"""
     try:
@@ -2994,7 +2994,7 @@ async def external_kb_documents(category: str = Query(None), username: str = Dep
         return {"success": True, "documents": []}
 
 
-@router.get("/external-kb/stats", summary="外部知识库统计")
+@router.get("/external-kb/stats", summary="全质知识库统计")
 async def external_kb_stats(category: str = Query(None), username: str = Depends(require_auth)):
     """获取外部知识库的文档数和切片数"""
     try:
@@ -3021,7 +3021,7 @@ async def external_kb_stats(category: str = Query(None), username: str = Depends
         return {"success": True, "doc_count": 0, "chunk_count": 0}
 
 
-@router.delete("/external-kb/documents/{filename}", summary="删除外部知识库文档")
+@router.delete("/external-kb/documents/{filename}", summary="删除全质知识库文档")
 async def delete_external_kb_document(filename: str, username: str = Depends(require_auth)):
     """删除外部知识库的文档"""
     try:
