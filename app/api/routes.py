@@ -1150,7 +1150,7 @@ async def upload_document(file: UploadFile = File(...), agent_id: str = Form(Non
 
     # 检查文件格式
 
-    allowed_ext = {".pdf", ".txt", ".md", ".docx", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+    allowed_ext = {".pdf", ".txt", ".md", ".docx", ".doc", ".xlsx", ".xls", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 
     ext = os.path.splitext(file.filename)[1].lower()
 
