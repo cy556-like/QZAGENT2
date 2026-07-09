@@ -2891,6 +2891,7 @@ def list_categories(agent_id: str) -> list[str]:
     前 5 个固定顺序为 [手册, 程序文件, 三层次文件, 记录表格, 其他]，
     用户新建的分类按字母顺序排在最后。
     外部知识库(__external__) 默认分组顺序：体系文件、按产品分类、按工艺分类、其他
+    且体系文件下默认创建 4 个子目录：手册、程序文件、三层次文件、记录表格
     """
     if not agent_id:
         return []
@@ -2923,6 +2924,45 @@ def list_categories(agent_id: str) -> list[str]:
         if entry.get("category"):
             cats.add(entry["category"])
 
+    # 外部知识库特殊处理：确保 4 个默认分组都存在（磁盘上没有就创建）
+    if agent_id == "__external__":
+        default_groups = ['体系文件', '按产品分类', '按工艺分类', '其他']
+        # 体系文件下的默认子目录
+        default_subs_for_tixi = ['手册', '程序文件', '三层次文件', '记录表格']
+        # 其他分组下的默认子目录
+        default_subs_for_other = ['标准及工具原文']
+        for g in default_groups:
+            g_path = os.path.join(agent_dir, g)
+            if not os.path.exists(g_path):
+                try:
+                    os.makedirs(g_path, exist_ok=True)
+                    logger.info(f"[ExtKB] 自动创建默认分组目录: {g_path}")
+                except Exception as e:
+                    logger.warning(f"[ExtKB] 创建默认分组目录失败 {g_path}: {e}")
+                cats.add(g)
+        # 体系文件下默认创建 4 个子目录
+        tixi_path = os.path.join(agent_dir, '体系文件')
+        if os.path.exists(tixi_path):
+            for sub in default_subs_for_tixi:
+                sub_path = os.path.join(tixi_path, sub)
+                if not os.path.exists(sub_path):
+                    try:
+                        os.makedirs(sub_path, exist_ok=True)
+                        logger.info(f"[ExtKB] 自动创建默认子目录: {sub_path}")
+                    except Exception as e:
+                        logger.warning(f"[ExtKB] 创建默认子目录失败 {sub_path}: {e}")
+        # 其他分组下默认创建"标准及工具原文"
+        other_path = os.path.join(agent_dir, '其他')
+        if os.path.exists(other_path):
+            for sub in default_subs_for_other:
+                sub_path = os.path.join(other_path, sub)
+                if not os.path.exists(sub_path):
+                    try:
+                        os.makedirs(sub_path, exist_ok=True)
+                        logger.info(f"[ExtKB] 自动创建默认子目录: {sub_path}")
+                    except Exception as e:
+                        logger.warning(f"[ExtKB] 创建默认子目录失败 {sub_path}: {e}")
+
     # 如果完全没有分类，返回默认初始分类
     if not cats:
         if agent_id == "__external__":
@@ -2953,6 +2993,10 @@ def list_subcategories(agent_id: str, category: str) -> list[str]:
     3. 关键词索引：所有该 category 下文档的 distinct subcategory
 
     合并三者，确保空目录也能显示（用户刚创建还没传文件的子目录）。
+
+    排序规则：
+    - 体系文件分组下：手册 → 程序文件 → 三层次文件 → 记录表格（固定顺序）
+    - 其他分组：按字母顺序
     """
     if not agent_id or not category:
         return []
@@ -2985,6 +3029,16 @@ def list_subcategories(agent_id: str, category: str) -> list[str]:
         if entry.get("category") == category and entry.get("subcategory"):
             subcats.add(entry["subcategory"])
 
+    # 体系文件下固定顺序
+    if category == '体系文件':
+        fixed_order = ['手册', '程序文件', '三层次文件', '记录表格']
+        result = []
+        for sub in fixed_order:
+            if sub in subcats:
+                result.append(sub)
+                subcats.discard(sub)
+        result.extend(sorted(subcats))
+        return result
     return sorted(list(subcats))
 
 
