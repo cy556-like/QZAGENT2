@@ -3544,9 +3544,11 @@ function hideSurveyForm() {
     const surveyPage = document.getElementById('surveyPage');
     const surveyUploadPage = document.getElementById('surveyUploadPage');
     const chatContent = document.getElementById('chatContent');
+    const sidebar = document.getElementById('sidebar');
     if (surveyPage) surveyPage.style.display = 'none';
-    if (surveyUploadPage) surveyUploadPage.style.display = 'none';  // [Bug 6 修复]
+    if (surveyUploadPage) surveyUploadPage.style.display = 'none';
     if (chatContent) chatContent.style.display = 'flex';
+    if (sidebar) sidebar.style.display = '';
     // 显示欢迎页
     const welcomeEl = document.getElementById('welcomeCenter');
     if (welcomeEl) welcomeEl.style.display = '';
@@ -3557,6 +3559,7 @@ function hideSurveyForm() {
     loadChatList();
     updateGenButtonsVisibility();
     updateHeaderKbVisibility();
+    updateCenteredMode();
 }
 
 function collectSurveyData() {
@@ -3628,11 +3631,16 @@ async function saveSurveyData() {
 }
 
 // 从上传页面进入对话
-function finishSurveyUpload() {
+async function finishSurveyUpload() {
     const surveyUploadPage = document.getElementById('surveyUploadPage');
     const chatContent = document.getElementById('chatContent');
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
     if (surveyUploadPage) surveyUploadPage.style.display = 'none';
     if (chatContent) chatContent.style.display = 'flex';
+    // 恢复侧边栏
+    if (sidebar) sidebar.style.display = '';
+    if (sidebarOverlay) sidebarOverlay.style.display = 'none';
     // 显示欢迎页
     const welcomeEl = document.getElementById('welcomeCenter');
     if (welcomeEl) welcomeEl.style.display = '';
@@ -3642,14 +3650,19 @@ function finishSurveyUpload() {
     renderMyAgents();
     updateGenButtonsVisibility();
     updateHeaderKbVisibility();
+    updateCenteredMode();
     // 如果没有当前对话，创建一个新对话
     if (!currentChatId) {
-        createNewChat().then(() => {
-            loadChatList();
+        try {
+            await createNewChat();
+            await loadChatList();
             showToast('✓ 体系调研信息已保存，点击左侧按钮可一键生成文档', 3000);
-        });
+        } catch (e) {
+            console.error('[finishSurveyUpload] 创建对话失败:', e);
+            showToast('创建对话失败，请重试', 3000);
+        }
     } else {
-        loadChatList();
+        await loadChatList();
         showToast('✓ 体系调研信息已保存，点击左侧按钮可一键生成文档', 3000);
     }
 }
