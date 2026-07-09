@@ -4537,7 +4537,10 @@ html { scroll-behavior: smooth; }
     min-height: 52px;
 
 
-    z-index: 10;
+    z-index: 1000;
+
+
+    position: relative;
 
 
 }
@@ -7564,7 +7567,7 @@ html { scroll-behavior: smooth; }
     box-shadow: var(--shadow-md);
 
 
-    z-index: 50;
+    z-index: 9999;
 
 
     min-width: 240px;
