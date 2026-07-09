@@ -11973,7 +11973,7 @@ html { scroll-behavior: smooth; }
     padding: 6px 14px;
 
 
-    background: transparent;
+    background: #fff;
 
 
     border: 1px solid var(--border);
@@ -11995,6 +11995,18 @@ html { scroll-behavior: smooth; }
 
 
     align-self: flex-start;
+
+
+    position: sticky;
+
+
+    top: 12px;
+
+
+    z-index: 100;
+
+
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 
 
 }
