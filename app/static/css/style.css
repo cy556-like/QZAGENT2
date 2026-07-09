@@ -13144,7 +13144,7 @@ html { scroll-behavior: smooth; }
     padding: 4px;
 }
 .kb-cat-col {
-    flex: 0 0 200px;
+    flex: 0 0 240px;
     display: flex;
     flex-direction: column;
     background: #fff;
@@ -13152,7 +13152,7 @@ html { scroll-behavior: smooth; }
     overflow: hidden;
 }
 .kb-subcat-col {
-    flex: 0 0 240px;
+    flex: 0 0 220px;
     display: flex;
     flex-direction: column;
     background: #fff;
@@ -13368,9 +13368,9 @@ html { scroll-behavior: smooth; }
 }
 .kb-cat-group-title .kb-cat-name {
     flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow: visible;
+    white-space: normal;
+    word-break: break-all;
 }
 .kb-cat-group-title .kb-cat-actions {
     display: flex;
