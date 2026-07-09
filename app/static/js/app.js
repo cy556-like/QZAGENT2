@@ -4127,7 +4127,138 @@ function generateDocument(type) {
         })();
         return;
     }
-    
+
+    // 一键生成程序文件：调用 CXskill API（SSE 流式接收进度）
+    if (type === 'procedure') {
+        const surveyData = getSurveyData();
+        if (!surveyData) {
+            showToast('请先点击"填写体系调研"填写企业信息', 3000);
+            showSurveyForm();
+            return;
+        }
+        const surveyPage = document.getElementById('surveyPage');
+        if (surveyPage && surveyPage.style.display !== 'none') {
+            hideSurveyForm();
+        }
+        document.getElementById('chatContent').classList.remove('centered');
+        const bubble = createStreamingBubble();
+        const bubbleContent = bubble.querySelector('.bubble') || bubble;
+
+        (async () => {
+            if (isLoading) return;
+            isLoading = true;
+            if (!currentChatId) {
+                await createNewChat();
+                if (!currentChatId) { isLoading = false; return; }
+            }
+            try {
+                bubbleContent.innerHTML = `
+                    <div class="gen-manual-progress">
+                        <div class="gen-progress-header">
+                            <span class="gen-spinner"></span>
+                            <span class="gen-step-text">正在启动...</span>
+                        </div>
+                        <div class="gen-progress-bar-wrap"><div class="gen-progress-bar" style="width:0%"></div></div>
+                        <div class="gen-message">准备中...</div>
+                        <div class="gen-modifications"></div>
+                    </div>
+                `;
+                scrollToBottom();
+                const stepTextEl = bubbleContent.querySelector('.gen-step-text');
+                const progressBarEl = bubbleContent.querySelector('.gen-progress-bar');
+                const messageEl = bubbleContent.querySelector('.gen-message');
+                const modsEl = bubbleContent.querySelector('.gen-modifications');
+                const genResp = await fetch('/api/v1/generate/procedure', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken, 'Accept': 'text/event-stream' },
+                    body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '' })
+                });
+                if (!genResp.ok) { throw new Error('HTTP ' + genResp.status + ': ' + await genResp.text()); }
+                const reader = genResp.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
+                let receivedCount = 0;
+                let modificationLog = [];
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const events = buffer.split('\n\n');
+                    buffer = events.pop();
+                    for (const evt of events) {
+                        const lines = evt.split('\n');
+                        let dataStr = '';
+                        for (const line of lines) { if (line.startsWith('data:')) dataStr += line.substring(5).trim(); }
+                        if (!dataStr) continue;
+                        let data; try { data = JSON.parse(dataStr); } catch (e) { continue; }
+                        if (data.type === 'progress') {
+                            stepTextEl.textContent = data.step || '处理中';
+                            if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
+                            messageEl.textContent = data.message || '';
+                            if (data.step === '应用修改方案' && !modsEl.querySelector('.gen-mods-header')) {
+                                modsEl.innerHTML = '<div class="gen-mods-header">正在应用的修改：</div><div class="gen-mods-list"></div>';
+                            }
+                        } else if (data.type === 'modifications_start') {
+                            if (!modsEl.querySelector('.gen-mods-header')) {
+                                modsEl.innerHTML = '<div class="gen-mods-header">' + (data.message || '正在应用的修改：') + '</div><div class="gen-mods-list"></div>';
+                            }
+                        } else if (data.type === 'modification') {
+                            receivedCount++;
+                            const list = modsEl.querySelector('.gen-mods-list') || modsEl;
+                            const modItem = document.createElement('div');
+                            modItem.className = 'gen-mod-item gen-mod-' + (data.mod_type || 'other');
+                            const reasonText = data.reason ? ` <span class="gen-mod-reason">${data.reason}</span>` : '';
+                            modItem.innerHTML = `<span class="gen-mod-badge">${data.location || ''}</span><span class="gen-mod-preview">${data.preview || ''}</span>${reasonText}`;
+                            list.appendChild(modItem);
+                            modificationLog.push({ location: data.location, preview: data.preview, reason: data.reason, mod_type: data.mod_type });
+                            if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
+                            scrollToBottom();
+                        } else if (data.type === 'success') {
+                            const stats = data.stats || {};
+                            const statLines = [];
+                            if (stats.paragraph) statLines.push(`段落 ${stats.paragraph} 处`);
+                            if (stats.table_cell) statLines.push(`表格 ${stats.table_cell} 处`);
+                            if (stats.global_replace) statLines.push(`全文替换 ${stats.global_replace} 处`);
+                            if (stats.header_replace) statLines.push(`页眉页脚 ${stats.header_replace} 处`);
+                            const statText = statLines.join('，') || '无修改';
+                            progressBarEl.style.width = '100%';
+                            stepTextEl.textContent = '完成';
+                            stepTextEl.previousElementSibling.style.display = 'none';
+                            const templateSourceHtml = data.template_source_text ? '<p class="gen-success-template" style="background:#f0f7ff;padding:8px 12px;border-radius:6px;color:#15589B;font-size:13px;white-space:pre-line;margin:6px 0 10px 0;">' + data.template_source_text.replace(/</g, '&lt;') + '</p>' : '';
+                            bubbleContent.innerHTML = `
+                                <div class="gen-manual-success">
+                                    <p class="gen-success-title">✓ 程序文件已生成完成</p>
+                                    <p class="gen-success-info">使用模型：${data.model_used || '未知'} ｜ 共 ${data.modifications_count} 个修改方案</p>
+                                    ${templateSourceHtml}
+                                    <p class="gen-success-stats">修改统计：${statText}</p>
+                                    <details class="gen-mods-details">
+                                        <summary>查看详细修改记录（共 ${modificationLog.length} 条）</summary>
+                                        <div class="gen-mods-detail-list">
+                                            ${modificationLog.map(m => `<div class="gen-mod-detail-item"><span class="gen-mod-badge">${m.location || ''}</span><span class="gen-mod-preview">${(m.preview || '').replace(/</g, '&lt;')}</span>${m.reason ? `<span class="gen-mod-reason">${m.reason}</span>` : ''}</div>`).join('')}
+                                        </div>
+                                    </details>
+                                    <br>
+                                    <a href="${data.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载程序文件</a>
+                                </div>
+                            `;
+                            scrollToBottom();
+                            if (currentChatId) { await fetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() }); }
+                            await loadChatList();
+                        } else if (data.type === 'error') {
+                            bubbleContent.innerHTML = `<p style="color:#e63946;">生成失败：${data.message || '未知错误'}</p>`;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('[生成程序文件] 失败:', e);
+                bubbleContent.innerHTML = '<p style="color:#e63946;">生成失败：' + e.message + '</p>';
+            } finally {
+                resetStreamingUI();
+            }
+        })();
+        return;
+    }
+
     // 付费功能：三层次文件、记录表格、不合格项整改
     if (type === 'third-level' || type === 'record' || type === 'rectification') {
         const surveyData = getSurveyData();
