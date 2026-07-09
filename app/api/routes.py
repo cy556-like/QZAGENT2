@@ -3443,6 +3443,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
 
     body = await request.json()
     survey_data = body.get("survey_data", {})
+    current_agent_id = body.get("agent_id", "")
 
     if not survey_data:
         raise HTTPException(status_code=400, detail="未提供体系调研数据")
@@ -3482,17 +3483,26 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             yield await send({
                 "type": "progress",
                 "step": "查找模板",
-                "message": "正在从知识库[手册]分类查找模板文件...",
+                "message": "正在查找模板文件（企业内部文件→全质知识库→内置模板）...",
                 "progress": 10
             })
             await asyncio.sleep(0.1)
-            template_path, need_convert = gm.find_template()
+            # 三级查找：企业内部文件知识库 → 全质知识库 → 内置模板
+            template_path, need_convert, template_source = gm.find_template(agent_id=current_agent_id)
             if template_path is None:
                 yield await send({
                     "type": "error",
-                    "message": "未找到模板文件。请在内部知识库[手册]分类下上传 .docx/.doc 模板。"
+                    "message": "未找到模板文件。请在企业内部文件知识库[手册]分类或全质知识库[体系文件/手册/全质手册模板]下上传 .docx/.doc 模板。"
                 })
                 return
+            # 显示模板来源
+            source_label = {'internal': '企业内部文件知识库', 'external': '全质知识库', 'builtin': '内置模板'}.get(template_source, '未知')
+            yield await send({
+                "type": "progress",
+                "step": "已找到模板",
+                "message": f"模板来源：{source_label}（{os.path.basename(str(template_path))}）",
+                "progress": 12
+            })
 
             # 步骤 4：.doc 转 .docx（如需要）
             actual_template = template_path
@@ -3775,9 +3785,10 @@ async def survey_upload(file: UploadFile = File(...), username: str = Depends(re
     return {"success": True, "file_path": file_path, "filename": file.filename}
 
 
-@router.post("/survey/extract", summary="AI提取文档中的企业信息")
+@router.post("/survey/extract", summary="AI提取文档中的企业信息+识别文件类型")
 async def survey_extract(request: Request, username: str = Depends(require_auth)):
-    """调用当前选择的LLM模型，从上传的文档中提取企业信息，自动填充到体系调研表单"""
+    """调用当前选择的LLM模型，从上传的文档中提取企业信息，自动填充到体系调研表单
+    同时识别文件类型（手册/程序文件/三层次文件/记录表格/其他），用于自动归类到知识库"""
     import json as _json
     import re
     body = await request.json()
@@ -3794,7 +3805,7 @@ async def survey_extract(request: Request, username: str = Depends(require_auth)
         if len(doc_text) > 8000:
             doc_text = doc_text[:8000] + "\n...(文档内容已截断)"
         logger.info(f"[调研提取] 文档={filename}, 文本长度={len(doc_text)}")
-        extract_prompt = '你是一个企业信息提取助手。请从以下文档内容中提取企业体系调研所需的信息。\n\n请严格按照以下JSON格式输出，只输出JSON，不要有任何其他文字。如果某个字段在文档中找不到，对应的值设为空字符串。\n\n{"company_name":"公司全称","certs":["ISO9001"],"cert_other":"其他证书","chairman":"董事长","legal_rep":"法人代表","gm":"总经理","deputy_gm":"副总经理","mgmt_rep":"管理者代表","leader_group_leader":"贯标组长","leader_group_members":"组员","iso_office_head":"贯标办主任","iso_office_members":"成员","auditors":"内审员","products":"体系覆盖产品","process_flow":"生产流程","location":"地理位置","area":"占地面积","building_area":"建筑面积","staff_total":"正式员工人数","staff_mgmt":"管理技术人员","staff_edu":"中专以上人数","equipment":"设备情况","customers":"主要客户","address":"公司地址","contact":"联系人","phone":"电话","fax":"传真","mobile":"手机","purpose":"公司宗旨","quality_policy":"质量方针","quality_goal":"质量目标","design_dev":"有无设计开发","org":{"综合管理":{"dept":"部门","head":"负责人"},"研发技术":{"dept":"部门","head":"负责人"},"采购":{"dept":"部门","head":"负责人"},"市场":{"dept":"部门","head":"负责人"},"财务":{"dept":"部门","head":"负责人"},"制造生产":{"dept":"部门","head":"负责人"},"质量":{"dept":"部门","head":"负责人"}}}\n\n文档内容：\n'
+        extract_prompt = '你是一个企业信息提取助手。请从以下文档内容中提取企业体系调研所需的信息，并识别文件类型。\n\n请严格按照以下JSON格式输出，只输出JSON，不要有任何其他文字。如果某个字段在文档中找不到，对应的值设为空字符串。\n\n{"file_type":"文件类型，必须是以下之一：手册/程序文件/三层次文件/记录表格/其他","file_type_name":"文件类型的具体名称，如：质量手册、文件控制程序、作业指导书等","company_name":"公司全称","certs":["ISO9001"],"cert_other":"其他证书","chairman":"董事长","legal_rep":"法人代表","gm":"总经理","deputy_gm":"副总经理","mgmt_rep":"管理者代表","leader_group_leader":"贯标组长","leader_group_members":"组员","iso_office_head":"贯标办主任","iso_office_members":"成员","auditors":"内审员","products":"体系覆盖产品","process_flow":"生产流程","location":"地理位置","area":"占地面积","building_area":"建筑面积","staff_total":"正式员工人数","staff_mgmt":"管理技术人员","staff_edu":"中专以上人数","equipment":"设备情况","customers":"主要客户","address":"公司地址","contact":"联系人","phone":"电话","fax":"传真","mobile":"手机","purpose":"公司宗旨","quality_policy":"质量方针","quality_goal":"质量目标","design_dev":"有无设计开发","org":{"综合管理":{"dept":"部门","head":"负责人"},"研发技术":{"dept":"部门","head":"负责人"},"采购":{"dept":"部门","head":"负责人"},"市场":{"dept":"部门","head":"负责人"},"财务":{"dept":"部门","head":"负责人"},"制造生产":{"dept":"部门","head":"负责人"},"质量":{"dept":"部门","head":"负责人"}}}\n\n文件名：' + filename + '\n\n文档内容：\n'
         from app.agent.core import create_llm
         from langchain_core.messages import HumanMessage, SystemMessage
         llm = create_llm(short_response=True)
@@ -3814,13 +3825,16 @@ async def survey_extract(request: Request, username: str = Depends(require_auth)
         except _json.JSONDecodeError as e:
             logger.error(f"[调研提取] JSON解析失败: {e}")
             raise HTTPException(status_code=500, detail="AI提取的信息格式异常")
-        logger.info(f"[调研提取] 成功提取 {len(fields)} 个字段")
+        # 提取文件类型信息
+        file_type = fields.get('file_type', '')
+        file_type_name = fields.get('file_type_name', '')
+        logger.info(f"[调研提取] 成功提取 {len(fields)} 个字段, 文件类型={file_type}/{file_type_name}")
         try:
             os.remove(file_path)
             logger.info(f"[调研提取] 已删除临时文件: {file_path}")
         except:
             pass
-        return {"success": True, "fields": fields}
+        return {"success": True, "fields": fields, "file_type": file_type, "file_type_name": file_type_name}
     except HTTPException:
         raise
     except Exception as e:

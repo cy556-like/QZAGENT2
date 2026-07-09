@@ -3950,6 +3950,30 @@ async function onSurveyFileSelected2(event) {
                 }
                 localStorage.setItem('surveyData', JSON.stringify(surveyData));
                 fileEntry.status = 'success';
+
+                // 4. 如果 AI 识别出文件类型，自动上传到企业内部文件知识库
+                const fileType = extractData.file_type || '';
+                const fileTypeName = extractData.file_type_name || '';
+                if (fileType && currentAgentId) {
+                    try {
+                        const kbFormData = new FormData();
+                        kbFormData.append('file', file);
+                        kbFormData.append('agent_id', currentAgentId);
+                        kbFormData.append('category', fileType);
+                        kbFormData.append('subcategory', fileTypeName || '通用');
+                        const kbResp = await fetch('/api/v1/upload', {
+                            method: 'POST',
+                            headers: { 'Authorization': 'Bearer ' + authToken },
+                            body: kbFormData
+                        });
+                        const kbData = await kbResp.json();
+                        if (kbResp.ok && (kbData.status === 'success' || kbData.filename)) {
+                            console.log('[调研上传] 文件已自动保存到企业内部文件知识库: ' + fileType + '/' + (fileTypeName || '通用') + '/' + file.name);
+                        }
+                    } catch (kbErr) {
+                        console.warn('[调研上传] 自动保存到知识库失败:', kbErr);
+                    }
+                }
             } else {
                 fileEntry.status = 'error';
             }
@@ -4134,7 +4158,7 @@ function generateDocument(type) {
                         'Authorization': 'Bearer ' + authToken,
                         'Accept': 'text/event-stream'
                     },
-                    body: JSON.stringify({ survey_data: surveyData })
+                    body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '' })
                 });
 
                 if (!genResp.ok) {
