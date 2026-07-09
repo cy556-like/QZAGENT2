@@ -583,11 +583,12 @@
                             </div>
                         </div>
                     </div>
-                    <!-- 第二列：当前选中路径（占位，显示当前选中的分组/子目录） -->
+                    <!-- 第二列：三级子目录（选中二级子目录后显示，可新建/重命名/删除） -->
                     <div class="kb-subcat-col">
                         <div class="kb-cat-panel">
                             <div class="kb-cat-header">
                                 <span class="kb-subcat-title" id="extKbSubcatTitle">请先选择左侧子目录</span>
+                                <button class="kb-cat-add-btn" onclick="addExtKbSubsubcategory()" title="新建子目录" id="extKbSubcatAddBtn" style="display:none;">+</button>
                             </div>
                             <div class="kb-cat-list" id="extKbSubcatList">
                                 <div class="kb-doc-empty" id="extKbSubcatEmpty">请先在左侧选择一个子目录</div>

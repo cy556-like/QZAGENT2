@@ -1499,6 +1499,109 @@ async def list_subcategories_api(
         return {"success": True, "subcategories": []}
 
 
+# ===== 三级子目录管理 API（全质知识库用）=====
+
+@router.get("/kb/subsubcategories", summary="列出某二级子目录下的三级子目录")
+async def list_subsubcategories_api(
+    agent_id: str = Query(..., description="智能体ID"),
+    category: str = Query(..., description="一级分类名"),
+    subcategory: str = Query(..., description="二级子目录名"),
+    username: str = Depends(require_auth),
+):
+    """列出指定智能体的某二级子目录下所有三级子目录名"""
+    from app.rag.document import list_subsubcategories
+    try:
+        subsubcats = await asyncio.to_thread(list_subsubcategories, agent_id, category, subcategory)
+        return {"success": True, "subsubcategories": subsubcats}
+    except Exception as e:
+        logger.exception(f"列出三级子目录失败: {e}")
+        return {"success": True, "subsubcategories": []}
+
+
+@router.post("/kb/subsubcategories", summary="新建三级子目录")
+async def create_subsubcategory_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """新建三级子目录（在指定 agent_id + category + subcategory 下创建子文件夹）"""
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
+    subcategory = (body.get("subcategory") or "").strip()
+    subsubcategory = (body.get("subsubcategory") or "").strip()
+    if not all([agent_id, category, subcategory, subsubcategory]):
+        raise HTTPException(status_code=400, detail="agent_id/category/subcategory/subsubcategory 不能为空")
+    import re as _re
+    if _re.search(r'[\\/:*?"<>|]', subsubcategory):
+        raise HTTPException(status_code=400, detail="子目录名含非法字符")
+    subsub_dir = os.path.join(_get_agent_dir(agent_id), category, subcategory, subsubcategory)
+    try:
+        os.makedirs(subsub_dir, exist_ok=True)
+    except Exception as e:
+        logger.exception(f"[KB] 新建三级子目录失败: {subsub_dir}, err={e}")
+        raise HTTPException(status_code=500, detail=f"创建目录失败: {e}")
+    logger.info(f"[KB] 新建三级子目录: agent={agent_id}, cat={category}, sub={subcategory}, subsub={subsubcategory}, user={username}")
+    return {"success": True, "subsubcategory": subsubcategory}
+
+
+@router.put("/kb/subsubcategories", summary="重命名三级子目录")
+async def rename_subsubcategory_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """重命名三级子目录（同步更新磁盘/ChromaDB/关键词索引）"""
+    from app.rag.document import rename_subsubcategory
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
+    subcategory = (body.get("subcategory") or "").strip()
+    old_subsub = (body.get("old_subsubcategory") or "").strip()
+    new_subsub = (body.get("new_subsubcategory") or "").strip()
+    if not all([agent_id, category, subcategory, old_subsub, new_subsub]):
+        raise HTTPException(status_code=400, detail="参数不完整")
+    result = await asyncio.to_thread(rename_subsubcategory, agent_id, category, subcategory, old_subsub, new_subsub)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=400, detail=result.get("message", "重命名失败"))
+    logger.info(f"[KB] 重命名三级子目录: {old_subsub} -> {new_subsub}, user={username}")
+    return {"success": True, "message": result.get("message")}
+
+
+@router.delete("/kb/subsubcategories", summary="删除三级子目录及其下所有文件")
+async def delete_subsubcategory_api(
+    request: Request,
+    username: str = Depends(require_auth),
+):
+    """删除三级子目录（同时删除磁盘文件 + ChromaDB 文档 + 关键词索引）"""
+    from app.rag.document import delete_subsubcategory
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"请求体不是有效 JSON: {e}")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
+    agent_id = (body.get("agent_id") or "").strip()
+    category = (body.get("category") or "").strip()
+    subcategory = (body.get("subcategory") or "").strip()
+    subsubcategory = (body.get("subsubcategory") or "").strip()
+    if not all([agent_id, category, subcategory, subsubcategory]):
+        raise HTTPException(status_code=400, detail="参数不完整")
+    result = await asyncio.to_thread(delete_subsubcategory, agent_id, category, subcategory, subsubcategory)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=400, detail=result.get("message", "删除失败"))
+    logger.info(f"[KB] 删除三级子目录: {category}/{subcategory}/{subsubcategory}, user={username}")
+    return {"success": True, "message": result.get("message")}
+
+
 @router.post("/kb/subcategories", summary="新建二级子目录")
 async def create_subcategory_api(
     request: Request,
@@ -3217,19 +3320,21 @@ async def get_agents(authorization: str = Header(None)):
 # ===== 外部知识库上传 =====
 
 @router.post("/external-kb/upload", summary="上传文档到全质知识库")
-async def external_kb_upload(file: UploadFile = File(...), category: str = Form(""), subcategory: str = Form(""), username: str = Depends(require_auth)):
-    """上传文档到外部知识库（external_kb collection），按一级分类+二级子目录存储"""
+async def external_kb_upload(file: UploadFile = File(...), category: str = Form(""), subcategory: str = Form(""), subsubcategory: str = Form(""), username: str = Depends(require_auth)):
+    """上传文档到外部知识库（external_kb collection），按一级分类+二级+三级子目录存储"""
     allowed_ext = {".pdf", ".txt", ".md", ".docx", ".xlsx", ".xls", ".doc"}
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in allowed_ext:
         raise HTTPException(status_code=400, detail=f"不支持的格式: {ext}")
 
-    # 保存文件到外部知识库目录（按一级分类 + 二级子目录存子目录）
+    # 保存文件到外部知识库目录（按一级分类 + 二级 + 三级子目录存子目录）
     ext_doc_dir = os.path.join(settings.DOCUMENTS_DIR, "external_kb")
     if category:
         ext_doc_dir = os.path.join(ext_doc_dir, category)
     if subcategory:
         ext_doc_dir = os.path.join(ext_doc_dir, subcategory)
+    if subsubcategory:
+        ext_doc_dir = os.path.join(ext_doc_dir, subsubcategory)
     os.makedirs(ext_doc_dir, exist_ok=True)
     decoded_filename = file.filename
     file_path = os.path.join(ext_doc_dir, decoded_filename)
@@ -3238,11 +3343,15 @@ async def external_kb_upload(file: UploadFile = File(...), category: str = Form(
     with open(file_path, "wb") as f:
         f.write(content_bytes)
 
-    logger.info(f"[外部知识库上传] 用户={username}, 文件={decoded_filename}, 分类={category}/{subcategory}")
+    logger.info(f"[外部知识库上传] 用户={username}, 文件={decoded_filename}, 分类={category}/{subcategory}/{subsubcategory}")
 
-    # 索引到 external_kb collection（带 category + subcategory 元数据）
+    # 索引到 external_kb collection（带 category + subcategory + subsubcategory 元数据）
     try:
-        index_result = await asyncio.to_thread(index_document, file_path, decoded_filename, agent_id="__external__", category=category or None, subcategory=subcategory or None)
+        index_result = await asyncio.to_thread(index_document, file_path, decoded_filename,
+                                                agent_id="__external__",
+                                                category=category or None,
+                                                subcategory=subcategory or None,
+                                                subsubcategory=subsubcategory or None)
         if index_result.get("status") == "error":
             raise HTTPException(status_code=500, detail=index_result.get("message", "索引失败"))
         chunks = index_result.get("chunks", 0)
@@ -3256,10 +3365,11 @@ async def external_kb_upload(file: UploadFile = File(...), category: str = Form(
 
 
 @router.get("/external-kb/documents", summary="列出全质知识库文档")
-async def external_kb_documents(category: str = Query(None), subcategory: str = Query(None), username: str = Depends(require_auth)):
-    """列出外部知识库的所有文档（按一级分类+二级子目录过滤）"""
+async def external_kb_documents(category: str = Query(None), subcategory: str = Query(None), subsubcategory: str = Query(None), username: str = Depends(require_auth)):
+    """列出外部知识库的所有文档（按一级+二级+三级子目录过滤）"""
     try:
-        docs = await asyncio.to_thread(list_indexed_documents, agent_id="__external__", category=category, subcategory=subcategory)
+        docs = await asyncio.to_thread(list_indexed_documents, agent_id="__external__",
+                                        category=category, subcategory=subcategory, subsubcategory=subsubcategory)
         return {"success": True, "documents": docs}
     except Exception as e:
         return {"success": True, "documents": []}
