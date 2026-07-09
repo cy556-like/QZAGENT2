@@ -11970,22 +11970,25 @@ html { scroll-behavior: smooth; }
     gap: 6px;
 
 
-    padding: 6px 14px;
+    padding: 8px 16px;
 
 
-    background: #fff;
+    background: #15589B;
 
 
-    border: 1px solid var(--border);
+    border: 1px solid #15589B;
 
 
     border-radius: 6px;
 
 
-    color: var(--text-secondary);
+    color: #fff;
 
 
     font-size: 13px;
+
+
+    font-weight: 600;
 
 
     cursor: pointer;
@@ -11997,16 +12000,19 @@ html { scroll-behavior: smooth; }
     align-self: flex-start;
 
 
-    position: sticky;
+    position: fixed;
 
 
     top: 12px;
 
 
-    z-index: 100;
+    left: 12px;
 
 
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    z-index: 9999;
+
+
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 
 
 }
@@ -12015,13 +12021,16 @@ html { scroll-behavior: smooth; }
 .kb-back-btn:hover {
 
 
-    border-color: var(--text-primary);
+    background: #0F467A;
 
 
-    color: var(--text-primary);
+    border-color: #0F467A;
 
 
-    background: var(--bg-secondary);
+    color: #fff;
+
+
+    box-shadow: 0 4px 12px rgba(21,88,155,0.4);
 
 
 }
