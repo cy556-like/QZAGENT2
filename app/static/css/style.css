@@ -12861,32 +12861,25 @@ html { scroll-behavior: smooth; }
     opacity: 0.85;
     margin: 0;
 }
-/* 上传页面紧凑 header（类似一行标题） */
+/* 上传页面紧凑 header（标题+副标题，上下两行，整体高度小） */
 .survey-upload-header {
     background: linear-gradient(135deg, #15589B 0%, #0F467A 100%);
     color: #fff;
-    padding: 14px 40px;
+    padding: 12px 40px;
     position: sticky;
     top: 0;
     z-index: 10;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
 }
 .survey-upload-header h2 {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
-    margin: 0;
-    white-space: nowrap;
+    margin: 0 0 2px 0;
 }
 .survey-upload-header p {
     font-size: 12px;
     opacity: 0.85;
     margin: 0;
-    flex: 1;
-    min-width: 200px;
 }
 /* 已上传文件列表 */
 .survey-uploaded-list {

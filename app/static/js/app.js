@@ -1156,7 +1156,7 @@ window.addEventListener('popstate', function(e) {
                 if (chatContent) chatContent.style.display = 'none';
                 if (sidebar) sidebar.style.display = '';
             } else if (e.state.page === 'survey_upload') {
-                if (surveyUploadPage) surveyUploadPage.style.display = 'flex';
+                if (surveyUploadPage) surveyUploadPage.style.display = 'block';
                 if (surveyPage) surveyPage.style.display = 'none';
                 if (helpPage) helpPage.style.display = 'none';
                 if (externalKbPage) externalKbPage.style.display = 'none';
@@ -3761,7 +3761,7 @@ function saveSurveyData() {
     const surveyPage = document.getElementById('surveyPage');
     const surveyUploadPage = document.getElementById('surveyUploadPage');
     if (surveyPage) surveyPage.style.display = 'none';
-    if (surveyUploadPage) surveyUploadPage.style.display = 'flex';
+    if (surveyUploadPage) surveyUploadPage.style.display = 'block';
     // 更新 history
     history.pushState({page: 'survey_upload'}, '');
     showToast('✓ 体系调研信息已保存', 2000);
