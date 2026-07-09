@@ -11997,16 +11997,19 @@ html { scroll-behavior: smooth; }
     align-self: flex-start;
 
 
-    position: sticky;
+}
 
 
-    top: 12px;
+.kb-back-btn.kb-back-btn-floating {
 
 
-    z-index: 100;
+    position: fixed;
 
 
-    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    z-index: 9999;
+
+
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
 
 
 }

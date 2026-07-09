@@ -4211,6 +4211,8 @@ function showExternalKbPage() {
     if (externalKbPage) externalKbPage.style.display = '';
     // push history state
     history.pushState({page: 'external_kb'}, '');
+    // 设置返回按钮滚动跟随
+    _setupKbBackBtnScrollListener();
     // 进入全质知识库时，重置选中状态，加载第一列分组列表
     currentExtKbCategory = '';
     currentExtKbSubcategory = null;
@@ -4581,6 +4583,64 @@ async function renameKbSubcategory(oldName, event) {
     }
 }
 
+// ===== 知识库返回按钮滚动跟随逻辑 =====
+// 监听知识库页面滚动，当返回按钮即将滚出视口时切换为 fixed 定位
+let _kbBackBtnScrollListenerBound = false;
+function _setupKbBackBtnScrollListener() {
+    if (_kbBackBtnScrollListenerBound) return;
+    _kbBackBtnScrollListenerBound = true;
+
+    // 用 requestAnimationFrame 节流，避免滚动卡顿
+    let ticking = false;
+    function updateBackBtnPosition() {
+        // 找到当前可见的知识库页面（kbPage 或 externalKbPage）
+        const kbPage = document.getElementById('kbPage');
+        const extKbPage = document.getElementById('externalKbPage');
+        const visiblePage = (kbPage && kbPage.style.display !== 'none') ? kbPage :
+                             (extKbPage && extKbPage.style.display !== 'none') ? extKbPage : null;
+        if (!visiblePage) return;
+
+        // 找到该页面内的返回按钮
+        const backBtn = visiblePage.querySelector('.kb-back-btn');
+        if (!backBtn) return;
+
+        // 获取按钮相对视口的位置
+        const rect = backBtn.getBoundingClientRect();
+        // 按钮原始位置顶部，如果滚到视口顶部 12px 以上就切换为 fixed
+        if (rect.top < 12 && !backBtn.classList.contains('kb-back-btn-floating')) {
+            // 切换为 fixed
+            backBtn.classList.add('kb-back-btn-floating');
+            backBtn.style.top = '12px';
+            backBtn.style.left = rect.left + 'px';  // 保持原水平位置
+        } else if (rect.top >= 12 && backBtn.classList.contains('kb-back-btn-floating')) {
+            // 滚回顶部了，恢复原样式
+            backBtn.classList.remove('kb-back-btn-floating');
+            backBtn.style.top = '';
+            backBtn.style.left = '';
+        }
+        ticking = false;
+    }
+
+    // 监听两个知识库页面的滚动事件
+    [kbPage, extKbPage].forEach(page => {
+        if (!page) return;
+        page.addEventListener('scroll', () => {
+            if (!ticking) {
+                requestAnimationFrame(updateBackBtnPosition);
+                ticking = true;
+            }
+        });
+    });
+    // 也监听窗口 resize（用户调整缩放比例时重新计算位置）
+    window.addEventListener('resize', () => {
+        document.querySelectorAll('.kb-back-btn-floating').forEach(btn => {
+            btn.classList.remove('kb-back-btn-floating');
+            btn.style.top = '';
+            btn.style.left = '';
+        });
+    });
+}
+
 function showKbPage() {
     if (!currentAgentId) {
         showToast('请先选择一个智能体');
@@ -4608,6 +4668,8 @@ function showKbPage() {
     document.getElementById('kbPageDesc').textContent = '上传和管理' + agentName + '相关文档，系统将自动进行向量化处理';
     // [BUG FIX] 推入历史状态，让浏览器←按钮能回到聊天页
     history.pushState({page: 'kb'}, '');
+    // 设置返回按钮滚动跟随
+    _setupKbBackBtnScrollListener();
     // 进入知识库时，先从后端加载第一列分类列表，再选中第一个分类（触发完整联动）
     (async () => {
         await loadKbCategories();
