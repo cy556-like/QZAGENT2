@@ -3564,6 +3564,40 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 "message": f"正在调用 AI 模型 [{current_model}] 分析模板并生成修改方案...\n（AI 会逐条输出修改方案，每条都会实时显示在下方）",
                 "progress": 50
             })
+            # 显示模板来源信息（让用户知道基于哪个模板生成）
+            template_filename = os.path.basename(str(template_path))
+            if template_source == 'internal':
+                # 计算相对路径（从 documents 目录开始）
+                try:
+                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
+                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + current_agent_id + '/', '企业内部文件/')
+                except Exception:
+                    template_path_display = '企业内部文件/' + template_filename
+                yield await send({
+                    "type": "progress",
+                    "step": "模板来源",
+                    "message": f"基于【企业内部文件】知识库上传的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}",
+                    "progress": 52
+                })
+            elif template_source == 'external':
+                try:
+                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
+                    template_path_display = rel_path.replace('\\', '/').replace('external_kb/', '全质知识库/')
+                except Exception:
+                    template_path_display = '全质知识库/体系文件/手册/全质手册模板/' + template_filename
+                yield await send({
+                    "type": "progress",
+                    "step": "模板来源",
+                    "message": f"基于【全质知识库】的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}",
+                    "progress": 52
+                })
+            else:
+                yield await send({
+                    "type": "progress",
+                    "step": "模板来源",
+                    "message": f"基于【内置模板】生成\n模板文件：{template_filename}",
+                    "progress": 52
+                })
             # 提示用户即将开始接收修改
             yield await send({
                 "type": "progress",
