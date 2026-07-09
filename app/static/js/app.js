@@ -4191,10 +4191,13 @@ function generateDocument(type) {
                             stepTextEl.previousElementSibling.style.display = 'none'; // 隐藏 spinner
 
                             // 显示完整结果
+                            const templateSourceHtml = data.template_source_text ?
+                                '<p class="gen-success-template" style="background:#f0f7ff;padding:8px 12px;border-radius:6px;color:#15589B;font-size:13px;white-space:pre-line;margin:6px 0 10px 0;">' + data.template_source_text.replace(/</g, '&lt;') + '</p>' : '';
                             bubbleContent.innerHTML = `
                                 <div class="gen-manual-success">
                                     <p class="gen-success-title">✓ 质量手册已生成完成</p>
                                     <p class="gen-success-info">使用模型：${data.model_used || '未知'} ｜ 共 ${totalMods} 个修改方案</p>
+                                    ${templateSourceHtml}
                                     <p class="gen-success-stats">修改统计：${statText}</p>
                                     <details class="gen-mods-details">
                                         <summary>查看详细修改记录（共 ${modificationLog.length} 条）</summary>

@@ -3769,6 +3769,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
 
             # 完成
             download_url = f"/api/v1/documents/export-download/{filename}"
+            # 构造模板来源显示文本
+            template_filename = os.path.basename(str(template_path))
+            if template_source == 'internal':
+                try:
+                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
+                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + current_agent_id + '/', '企业内部文件/')
+                except Exception:
+                    template_path_display = '企业内部文件/' + template_filename
+                template_source_text = f"基于【企业内部文件】知识库上传的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}"
+            elif template_source == 'external':
+                try:
+                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
+                    template_path_display = rel_path.replace('\\', '/').replace('external_kb/', '全质知识库/')
+                except Exception:
+                    template_path_display = '全质知识库/体系文件/手册/全质手册模板/' + template_filename
+                template_source_text = f"基于【全质知识库】的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}"
+            else:
+                template_source_text = f"基于【内置模板】生成\n模板文件：{template_filename}"
             yield await send({
                 "type": "success",
                 "filename": filename,
@@ -3776,6 +3794,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 "modifications_count": modifications_count,
                 "stats": stats,
                 "model_used": current_model,
+                "template_source_text": template_source_text,
                 "progress": 100
             })
 
