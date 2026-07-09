@@ -12881,6 +12881,17 @@ html { scroll-behavior: smooth; }
     opacity: 0.85;
     margin: 0;
 }
+.survey-upload-header .survey-back-btn {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.4);
+    color: #fff;
+    margin-bottom: 6px;
+}
+.survey-upload-header .survey-back-btn:hover {
+    background: rgba(255,255,255,0.25);
+    border-color: #fff;
+    color: #fff;
+}
 /* 已上传文件列表 */
 .survey-uploaded-list {
     margin-top: 16px;

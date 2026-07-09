@@ -3673,6 +3673,7 @@ async function onExtKbFileSelected(event) {
 // ===== 体系调研表单 =====
 function showSurveyForm() {
     const surveyPage = document.getElementById('surveyPage');
+    const surveyUploadPage = document.getElementById('surveyUploadPage');
     const chatContent = document.getElementById('chatContent');
     const kbPage = document.getElementById('kbPage');
     const helpPage = document.getElementById('helpPage');
@@ -3681,7 +3682,7 @@ function showSurveyForm() {
     if (helpPage) helpPage.style.display = 'none';
     if (externalKbPage) externalKbPage.style.display = 'none';
     if (chatContent) chatContent.style.display = 'none';
-    if (chatContent) chatContent.style.display = 'none';
+    if (surveyUploadPage) surveyUploadPage.style.display = 'none';  // 隐藏上传页面
     if (surveyPage) {
         surveyPage.style.display = 'block';
         loadSurveyData();
@@ -3694,6 +3695,18 @@ function showSurveyForm() {
     updateHeaderKbVisibility();
     renderMyAgents();
     // push history
+    history.pushState({page: 'survey'}, '');
+}
+
+// 从上传页面返回填表界面
+function backToSurveyForm() {
+    const surveyPage = document.getElementById('surveyPage');
+    const surveyUploadPage = document.getElementById('surveyUploadPage');
+    if (surveyUploadPage) surveyUploadPage.style.display = 'none';
+    if (surveyPage) {
+        surveyPage.style.display = 'block';
+        loadSurveyData();
+    }
     history.pushState({page: 'survey'}, '');
 }
 
