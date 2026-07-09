@@ -3593,15 +3593,25 @@ function collectSurveyData() {
     return data;
 }
 
-function saveSurveyData() {
+async function saveSurveyData() {
     const data = collectSurveyData();
     // 验证必填字段
     if (!data.sv_company_name) { showToast('请填写公司名称', 3000); return; }
     if (!data.sv_products) { showToast('请填写体系覆盖的产品', 3000); return; }
     if (!data.sv_filler_name) { showToast('请填写填写人姓名', 3000); return; }
     if (!data.sv_filler_phone) { showToast('请填写填写人手机', 3000); return; }
-    // 保存到 localStorage
+    // 保存到 localStorage（本地缓存）
     localStorage.setItem('surveyData', JSON.stringify(data));
+    // 保存到服务器（跨浏览器同步）
+    try {
+        await fetch('/api/v1/survey/save', {
+            method: 'POST',
+            headers: apiHeaders(),
+            body: JSON.stringify({ survey_data: data })
+        });
+    } catch (e) {
+        console.warn('[调研保存] 服务器保存失败，仅本地保存:', e);
+    }
     // 隐藏调研表单，显示文件上传页面
     const surveyPage = document.getElementById('surveyPage');
     const surveyUploadPage = document.getElementById('surveyUploadPage');
@@ -3781,9 +3791,19 @@ async function onSurveyFileSelected2(event) {
     event.target.value = '';
 }
 
-function saveSurveyDraft() {
+async function saveSurveyDraft() {
     const data = collectSurveyData();
     localStorage.setItem('surveyData', JSON.stringify(data));
+    // 同步到服务器
+    try {
+        await fetch('/api/v1/survey/save', {
+            method: 'POST',
+            headers: apiHeaders(),
+            body: JSON.stringify({ survey_data: data })
+        });
+    } catch (e) {
+        console.warn('[草稿暂存] 服务器保存失败:', e);
+    }
     showToast('💾 草稿已暂存', 2000);
 }
 
@@ -3798,33 +3818,54 @@ function clearSurveyData() {
     document.querySelectorAll('#sv_org_table input[type="text"]').forEach(inp => inp.value = '');
     // 删除 localStorage
     localStorage.removeItem('surveyData');
+    // 清除服务器数据
+    fetch('/api/v1/survey/clear', { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
     showToast('已清空所有填写内容', 2000);
 }
 
-function loadSurveyData() {
+// 将调研数据填充到表单 UI（内部函数）
+function _fillSurveyFormUI(data) {
+    if (!data) return;
+    // 文本字段
+    Object.keys(data).forEach(key => {
+        if (key === 'sv_certs' || key === 'sv_org') return;
+        const el = document.getElementById(key);
+        if (el) el.value = data[key];
+    });
+    // 证书复选框
+    if (data.sv_certs) {
+        document.querySelectorAll('.sv_cert').forEach(cb => {
+            cb.checked = data.sv_certs.includes(cb.value);
+        });
+    }
+    // 机构设置
+    if (data.sv_org) {
+        Object.keys(data.sv_org).forEach(field => {
+            const inp = document.querySelector('#sv_org_table input[data-field="' + field + '"]');
+            if (inp) inp.value = data.sv_org[field];
+        });
+    }
+}
+
+async function loadSurveyData() {
+    // 优先从服务器加载（跨浏览器同步）
+    try {
+        const resp = await fetch('/api/v1/survey/load', { headers: apiHeaders() });
+        const data = await resp.json();
+        if (data.success && data.survey_data) {
+            // 服务器有数据，填充表单 + 同步到 localStorage
+            _fillSurveyFormUI(data.survey_data);
+            localStorage.setItem('surveyData', JSON.stringify(data.survey_data));
+            return;
+        }
+    } catch (e) {
+        console.warn('[调研加载] 服务器加载失败，尝试本地:', e);
+    }
+    // 兜底：从 localStorage 加载
     const saved = localStorage.getItem('surveyData');
     if (!saved) return;
     try {
-        const data = JSON.parse(saved);
-        // 文本字段
-        Object.keys(data).forEach(key => {
-            if (key === 'sv_certs' || key === 'sv_org') return;
-            const el = document.getElementById(key);
-            if (el) el.value = data[key];
-        });
-        // 证书复选框
-        if (data.sv_certs) {
-            document.querySelectorAll('.sv_cert').forEach(cb => {
-                cb.checked = data.sv_certs.includes(cb.value);
-            });
-        }
-        // 机构设置
-        if (data.sv_org) {
-            Object.keys(data.sv_org).forEach(field => {
-                const inp = document.querySelector('#sv_org_table input[data-field="' + field + '"]');
-                if (inp) inp.value = data.sv_org[field];
-            });
-        }
+        _fillSurveyFormUI(JSON.parse(saved));
     } catch(e) {
         console.warn('加载调研数据失败:', e);
     }

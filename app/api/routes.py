@@ -3822,6 +3822,53 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
     )
 
 
+# ===== 体系调研数据存储（服务端，跨浏览器同步）=====
+
+@router.post("/survey/save", summary="保存体系调研数据到服务器")
+async def survey_save(request: Request, username: str = Depends(require_auth)):
+    """保存体系调研数据到服务器（按用户隔离），实现跨浏览器同步"""
+    body = await request.json()
+    survey_data = body.get("survey_data", {})
+    if not survey_data:
+        raise HTTPException(status_code=400, detail="未提供调研数据")
+    # 保存到 data/survey/{username}.json
+    survey_dir = os.path.join(settings.DATA_DIR, "survey")
+    os.makedirs(survey_dir, exist_ok=True)
+    survey_file = os.path.join(survey_dir, f"{username}.json")
+    import json as _json
+    with open(survey_file, 'w', encoding='utf-8') as f:
+        _json.dump(survey_data, f, ensure_ascii=False, indent=2)
+    logger.info(f"[调研保存] 用户={username}, 字段数={len(survey_data)}")
+    return {"success": True, "message": "调研数据已保存到服务器"}
+
+
+@router.get("/survey/load", summary="加载体系调研数据")
+async def survey_load(username: str = Depends(require_auth)):
+    """从服务器加载体系调研数据（按用户隔离）"""
+    survey_file = os.path.join(settings.DATA_DIR, "survey", f"{username}.json")
+    if not os.path.exists(survey_file):
+        return {"success": True, "survey_data": None, "message": "暂无保存的调研数据"}
+    try:
+        import json as _json
+        with open(survey_file, 'r', encoding='utf-8') as f:
+            survey_data = _json.load(f)
+        logger.info(f"[调研加载] 用户={username}, 字段数={len(survey_data) if survey_data else 0}")
+        return {"success": True, "survey_data": survey_data}
+    except Exception as e:
+        logger.warning(f"[调研加载] 读取失败: {e}")
+        return {"success": True, "survey_data": None, "message": f"读取失败: {e}"}
+
+
+@router.delete("/survey/clear", summary="清除体系调研数据")
+async def survey_clear(username: str = Depends(require_auth)):
+    """清除服务器上的体系调研数据"""
+    survey_file = os.path.join(settings.DATA_DIR, "survey", f"{username}.json")
+    if os.path.exists(survey_file):
+        os.remove(survey_file)
+        logger.info(f"[调研清除] 用户={username}")
+    return {"success": True, "message": "调研数据已清除"}
+
+
 # ===== 体系调研文档上传与AI提取 =====
 
 @router.post("/survey/upload", summary="上传体系调研文档到临时目录")
