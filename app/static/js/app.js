@@ -4590,11 +4590,9 @@ function _updateKbBackBtnPosition() {
     // 找到当前可见的知识库页面（kbPage 或 externalKbPage）
     const kbPage = document.getElementById('kbPage');
     const extKbPage = document.getElementById('externalKbPage');
-    // display 是 'flex' 表示可见，'none' 表示隐藏
     let visiblePage = null;
     if (kbPage && kbPage.style.display === 'flex') visiblePage = kbPage;
     else if (extKbPage && extKbPage.style.display === 'flex') visiblePage = extKbPage;
-    // 兜底：检查 computed style（避免 inline style 为空的情况）
     if (!visiblePage) {
         if (kbPage && getComputedStyle(kbPage).display !== 'none') visiblePage = kbPage;
         else if (extKbPage && getComputedStyle(extKbPage).display !== 'none') visiblePage = extKbPage;
@@ -4604,16 +4602,46 @@ function _updateKbBackBtnPosition() {
     const backBtn = visiblePage.querySelector('.kb-back-btn');
     if (!backBtn) return;
 
-    const rect = backBtn.getBoundingClientRect();
-    // 当按钮顶部即将滚出视口顶部时切换为 fixed
-    if (rect.top < 12 && !backBtn.classList.contains('kb-back-btn-floating')) {
-        backBtn.classList.add('kb-back-btn-floating');
-        backBtn.style.top = '12px';
-        backBtn.style.left = rect.left + 'px';
-    } else if (rect.top >= 12 && backBtn.classList.contains('kb-back-btn-floating')) {
-        backBtn.classList.remove('kb-back-btn-floating');
-        backBtn.style.top = '';
-        backBtn.style.left = '';
+    // 找到 header 容器（按钮的父级），获取它相对视口的位置作为"原位"参考
+    const header = backBtn.closest('.kb-page-header');
+    if (!header) return;
+    const headerRect = header.getBoundingClientRect();
+
+    // 按钮原始 left = header 的 left + header 的 padding-left
+    // 用 header 的 left 作为基准，避免按钮 fixed 后脱流导致 getBoundingClientRect 错乱
+    const computedHeaderStyle = getComputedStyle(header);
+    const headerPaddingLeft = parseFloat(computedHeaderStyle.paddingLeft) || 0;
+    const originalLeft = headerRect.left + headerPaddingLeft;
+    const originalTop = 12;  // 固定在视口顶部 12px
+
+    // 判断按钮是否需要 fixed：
+    // 如果按钮当前是 normal 状态，看它的 rect.top
+    // 如果按钮当前是 floating 状态，看滚动位置判断是否需要恢复
+    const isFloating = backBtn.classList.contains('kb-back-btn-floating');
+
+    if (!isFloating) {
+        // normal 状态：用按钮真实位置判断
+        const btnRect = backBtn.getBoundingClientRect();
+        if (btnRect.top < 12) {
+            // 即将滚出视口，切换为 fixed
+            backBtn.classList.add('kb-back-btn-floating');
+            backBtn.style.top = originalTop + 'px';
+            backBtn.style.left = originalLeft + 'px';
+        }
+    } else {
+        // floating 状态：用 header 的位置判断是否滚回顶部了
+        // 当 header 顶部回到视口顶部以上 12px 内时，恢复 normal
+        if (headerRect.top >= 12 - 5) {  // -5 容差，避免临界点抖动
+            backBtn.classList.remove('kb-back-btn-floating');
+            backBtn.style.top = '';
+            backBtn.style.left = '';
+        } else {
+            // 仍在 floating 状态，持续更新 left（防止滚动条出现/缩放变化导致位置偏移）
+            const currentLeft = parseFloat(backBtn.style.left) || 0;
+            if (Math.abs(currentLeft - originalLeft) > 1) {
+                backBtn.style.left = originalLeft + 'px';
+            }
+        }
     }
 }
 
