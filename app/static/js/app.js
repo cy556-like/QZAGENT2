@@ -4583,61 +4583,72 @@ async function renameKbSubcategory(oldName, event) {
     }
 }
 
-// ===== 知识库返回按钮滚动跟随逻辑 =====
+// ===== 知识库返回按钮滚动跟随逻辑（用 JS 监听滚动，避免 sticky 失效）=====
 // 监听知识库页面滚动，当返回按钮即将滚出视口时切换为 fixed 定位
-let _kbBackBtnScrollListenerBound = false;
-function _setupKbBackBtnScrollListener() {
-    if (_kbBackBtnScrollListenerBound) return;
-    _kbBackBtnScrollListenerBound = true;
 
-    // 用 requestAnimationFrame 节流，避免滚动卡顿
-    let ticking = false;
-    function updateBackBtnPosition() {
-        // 找到当前可见的知识库页面（kbPage 或 externalKbPage）
-        const kbPage = document.getElementById('kbPage');
-        const extKbPage = document.getElementById('externalKbPage');
-        const visiblePage = (kbPage && kbPage.style.display !== 'none') ? kbPage :
-                             (extKbPage && extKbPage.style.display !== 'none') ? extKbPage : null;
-        if (!visiblePage) return;
-
-        // 找到该页面内的返回按钮
-        const backBtn = visiblePage.querySelector('.kb-back-btn');
-        if (!backBtn) return;
-
-        // 获取按钮相对视口的位置
-        const rect = backBtn.getBoundingClientRect();
-        // 按钮原始位置顶部，如果滚到视口顶部 12px 以上就切换为 fixed
-        if (rect.top < 12 && !backBtn.classList.contains('kb-back-btn-floating')) {
-            // 切换为 fixed
-            backBtn.classList.add('kb-back-btn-floating');
-            backBtn.style.top = '12px';
-            backBtn.style.left = rect.left + 'px';  // 保持原水平位置
-        } else if (rect.top >= 12 && backBtn.classList.contains('kb-back-btn-floating')) {
-            // 滚回顶部了，恢复原样式
-            backBtn.classList.remove('kb-back-btn-floating');
-            backBtn.style.top = '';
-            backBtn.style.left = '';
-        }
-        ticking = false;
+function _updateKbBackBtnPosition() {
+    // 找到当前可见的知识库页面（kbPage 或 externalKbPage）
+    const kbPage = document.getElementById('kbPage');
+    const extKbPage = document.getElementById('externalKbPage');
+    // display 是 'flex' 表示可见，'none' 表示隐藏
+    let visiblePage = null;
+    if (kbPage && kbPage.style.display === 'flex') visiblePage = kbPage;
+    else if (extKbPage && extKbPage.style.display === 'flex') visiblePage = extKbPage;
+    // 兜底：检查 computed style（避免 inline style 为空的情况）
+    if (!visiblePage) {
+        if (kbPage && getComputedStyle(kbPage).display !== 'none') visiblePage = kbPage;
+        else if (extKbPage && getComputedStyle(extKbPage).display !== 'none') visiblePage = extKbPage;
     }
+    if (!visiblePage) return;
 
-    // 监听两个知识库页面的滚动事件
+    const backBtn = visiblePage.querySelector('.kb-back-btn');
+    if (!backBtn) return;
+
+    const rect = backBtn.getBoundingClientRect();
+    // 当按钮顶部即将滚出视口顶部时切换为 fixed
+    if (rect.top < 12 && !backBtn.classList.contains('kb-back-btn-floating')) {
+        backBtn.classList.add('kb-back-btn-floating');
+        backBtn.style.top = '12px';
+        backBtn.style.left = rect.left + 'px';
+    } else if (rect.top >= 12 && backBtn.classList.contains('kb-back-btn-floating')) {
+        backBtn.classList.remove('kb-back-btn-floating');
+        backBtn.style.top = '';
+        backBtn.style.left = '';
+    }
+}
+
+let _kbBackBtnTicking = false;
+let _kbBackBtnScrollBound = false;
+function _setupKbBackBtnScrollListener() {
+    // 主动触发一次位置检测（每次进入知识库都执行）
+    requestAnimationFrame(_updateKbBackBtnPosition);
+    // 守卫：scroll 监听只绑定一次
+    if (_kbBackBtnScrollBound) return;
+    _kbBackBtnScrollBound = true;
+
+    const kbPage = document.getElementById('kbPage');
+    const extKbPage = document.getElementById('externalKbPage');
+
     [kbPage, extKbPage].forEach(page => {
         if (!page) return;
         page.addEventListener('scroll', () => {
-            if (!ticking) {
-                requestAnimationFrame(updateBackBtnPosition);
-                ticking = true;
+            if (!_kbBackBtnTicking) {
+                _kbBackBtnTicking = true;
+                requestAnimationFrame(() => {
+                    _updateKbBackBtnPosition();
+                    _kbBackBtnTicking = false;
+                });
             }
         });
     });
-    // 也监听窗口 resize（用户调整缩放比例时重新计算位置）
+
     window.addEventListener('resize', () => {
         document.querySelectorAll('.kb-back-btn-floating').forEach(btn => {
             btn.classList.remove('kb-back-btn-floating');
             btn.style.top = '';
             btn.style.left = '';
         });
+        requestAnimationFrame(_updateKbBackBtnPosition);
     });
 }
 
