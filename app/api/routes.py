@@ -3488,7 +3488,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             })
             await asyncio.sleep(0.1)
             # 三级查找：企业内部文件知识库 → 全质知识库 → 内置模板
-            template_path, need_convert, template_source = gm.find_template(agent_id=current_agent_id)
+            template_path, need_convert, template_source = gm.find_template(agent_id=current_agent_id, documents_dir=settings.DOCUMENTS_DIR)
             if template_path is None:
                 yield await send({
                     "type": "error",
