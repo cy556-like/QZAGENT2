@@ -3822,11 +3822,12 @@ function renderSurveyUploadedList() {
     listEl.style.display = 'block';
     let html = '';
     surveyUploadedFiles.forEach((f, idx) => {
-        const statusText = f.status === 'success' ? '✓ 已识别' :
+        const statusText = f.status === 'success' ? '✓ 已归类' :
                            f.status === 'processing' ? '⏳ 识别中...' :
                            f.status === 'error' ? '❌ 失败' : '⏳ 待处理';
+        const typeLabel = (f.fileType && f.fileTypeName) ? ' [' + escapeHtml(f.fileType) + '/' + escapeHtml(f.fileTypeName) + ']' : '';
         html += '<div class="survey-uploaded-item">' +
-            '<span class="survey-uploaded-item-name">' + escapeHtml(f.name) + '</span>' +
+            '<span class="survey-uploaded-item-name">' + escapeHtml(f.name) + '<span style="color:#888;font-size:12px;">' + typeLabel + '</span></span>' +
             '<span class="survey-uploaded-item-status ' + (f.status || '') + '">' + statusText + '</span>' +
             '<span class="survey-uploaded-item-remove" onclick="removeSurveyUploadedFile(' + idx + ')" title="移除">×</span>' +
             '</div>';
@@ -3862,7 +3863,7 @@ async function onSurveyFileSelected2(event) {
         renderSurveyUploadedList();
 
         try {
-            // 1. 上传文件到临时目录
+            // 1. 上传文件到临时目录（用于 AI 识别文件类型）
             const formData = new FormData();
             formData.append('file', file);
             const uploadResp = await fetch('/api/v1/survey/upload', {
@@ -3875,7 +3876,7 @@ async function onSurveyFileSelected2(event) {
                 throw new Error(uploadData.detail || '上传失败');
             }
 
-            // 2. 调用 AI 提取
+            // 2. 调用 AI 识别文件类型（不再提取信息填充表单）
             const extractResp = await fetch('/api/v1/survey/extract', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
@@ -3883,84 +3884,19 @@ async function onSurveyFileSelected2(event) {
             });
             const extractData = await extractResp.json();
 
-            if (extractResp.ok && extractData.success && extractData.fields) {
-                // 3. 用提取的数据更新 localStorage 中的调研数据
-                const saved = localStorage.getItem('surveyData');
-                const surveyData = saved ? JSON.parse(saved) : {};
-                const fieldMap = {
-                    'company_name': 'sv_company_name',
-                    'cert_other': 'sv_cert_other',
-                    'chairman': 'sv_chairman',
-                    'legal_rep': 'sv_legal_rep',
-                    'gm': 'sv_gm',
-                    'deputy_gm': 'sv_deputy_gm',
-                    'mgmt_rep': 'sv_mgmt_rep',
-                    'leader_group_leader': 'sv_leader_group_leader',
-                    'leader_group_members': 'sv_leader_group_members',
-                    'iso_office_head': 'sv_iso_office_head',
-                    'iso_office_members': 'sv_iso_office_members',
-                    'auditors': 'sv_auditors',
-                    'products': 'sv_products',
-                    'process_flow': 'sv_process_flow',
-                    'location': 'sv_location',
-                    'area': 'sv_area',
-                    'building_area': 'sv_building_area',
-                    'staff_total': 'sv_staff_total',
-                    'staff_mgmt': 'sv_staff_mgmt',
-                    'staff_edu': 'sv_staff_edu',
-                    'equipment': 'sv_equipment',
-                    'customers': 'sv_customers',
-                    'address': 'sv_address',
-                    'contact': 'sv_contact',
-                    'phone': 'sv_phone',
-                    'fax': 'sv_fax',
-                    'mobile': 'sv_mobile',
-                    'purpose': 'sv_purpose',
-                    'quality_policy': 'sv_quality_policy',
-                    'quality_goal': 'sv_quality_goal',
-                    'design_dev': 'sv_design_dev',
-                    'filler_name': 'sv_filler_name',
-                    'filler_phone': 'sv_filler_phone',
-                };
-                Object.keys(fieldMap).forEach(key => {
-                    const inputId = fieldMap[key];
-                    if (extractData.fields[key]) {
-                        // 只在原值为空时填充，避免覆盖用户手动填写的数据
-                        if (!surveyData[inputId]) {
-                            surveyData[inputId] = extractData.fields[key];
-                        }
-                    }
-                });
-                // 证书复选框（合并）
-                if (Array.isArray(extractData.fields.certs)) {
-                    const existingCerts = Array.isArray(surveyData.sv_certs) ? surveyData.sv_certs : [];
-                    surveyData.sv_certs = Array.from(new Set([...existingCerts, ...extractData.fields.certs]));
-                }
-                // 机构设置（合并）
-                if (extractData.fields.org && typeof extractData.fields.org === 'object') {
-                    if (!surveyData.sv_org) surveyData.sv_org = {};
-                    Object.keys(extractData.fields.org).forEach(funcKey => {
-                        if (!surveyData.sv_org[funcKey + '_dept']) {
-                            surveyData.sv_org[funcKey + '_dept'] = extractData.fields.org[funcKey].dept || '';
-                        }
-                        if (!surveyData.sv_org[funcKey + '_head']) {
-                            surveyData.sv_org[funcKey + '_head'] = extractData.fields.org[funcKey].head || '';
-                        }
-                    });
-                }
-                localStorage.setItem('surveyData', JSON.stringify(surveyData));
-                fileEntry.status = 'success';
-
-                // 4. 如果 AI 识别出文件类型，自动上传到企业内部文件知识库
-                const fileType = extractData.file_type || '';
-                const fileTypeName = extractData.file_type_name || '';
-                if (fileType && currentAgentId) {
+            if (extractResp.ok && extractData.success) {
+                // 3. AI 识别出文件类型，自动上传到企业内部文件知识库
+                const fileType = extractData.file_type || '其他';
+                const fileTypeName = extractData.file_type_name || '通用';
+                fileEntry.fileType = fileType;
+                fileEntry.fileTypeName = fileTypeName;
+                if (currentAgentId) {
                     try {
                         const kbFormData = new FormData();
                         kbFormData.append('file', file);
                         kbFormData.append('agent_id', currentAgentId);
                         kbFormData.append('category', fileType);
-                        kbFormData.append('subcategory', fileTypeName || '通用');
+                        kbFormData.append('subcategory', fileTypeName);
                         const kbResp = await fetch('/api/v1/upload', {
                             method: 'POST',
                             headers: { 'Authorization': 'Bearer ' + authToken },
@@ -3968,11 +3904,17 @@ async function onSurveyFileSelected2(event) {
                         });
                         const kbData = await kbResp.json();
                         if (kbResp.ok && (kbData.status === 'success' || kbData.filename)) {
-                            console.log('[调研上传] 文件已自动保存到企业内部文件知识库: ' + fileType + '/' + (fileTypeName || '通用') + '/' + file.name);
+                            console.log('[调研上传] 文件已保存到企业内部文件知识库: ' + fileType + '/' + fileTypeName + '/' + file.name);
+                            fileEntry.status = 'success';
+                        } else {
+                            fileEntry.status = 'error';
                         }
                     } catch (kbErr) {
-                        console.warn('[调研上传] 自动保存到知识库失败:', kbErr);
+                        console.warn('[调研上传] 保存到知识库失败:', kbErr);
+                        fileEntry.status = 'error';
                     }
+                } else {
+                    fileEntry.status = 'error';
                 }
             } else {
                 fileEntry.status = 'error';
@@ -3991,7 +3933,7 @@ async function onSurveyFileSelected2(event) {
         statusEl.style.display = 'block';
         if (errorCount === 0) {
             statusEl.className = 'survey-upload-status success';
-            statusEl.innerHTML = '✓ 共上传 ' + successCount + ' 个文件，AI 已识别并补充调研数据';
+            statusEl.innerHTML = '✓ 共上传 ' + successCount + ' 个文件，已自动归类到企业内部文件知识库';
         } else {
             statusEl.className = 'survey-upload-status error';
             statusEl.innerHTML = '⚠️ ' + successCount + ' 个成功，' + errorCount + ' 个失败，可继续或重新上传';
