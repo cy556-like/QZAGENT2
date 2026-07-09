@@ -3794,121 +3794,171 @@ function finishSurveyUpload() {
     }
 }
 
-// 上传页面文件选择处理（上传后 AI 提取信息并更新表单）
+// 上传页面已上传文件列表（内存中维护，刷新页面会丢失）
+let surveyUploadedFiles = [];
+
+// 渲染已上传文件列表
+function renderSurveyUploadedList() {
+    const listEl = document.getElementById('surveyUploadedList');
+    const itemsEl = document.getElementById('surveyUploadedListItems');
+    if (!listEl || !itemsEl) return;
+    if (surveyUploadedFiles.length === 0) {
+        listEl.style.display = 'none';
+        return;
+    }
+    listEl.style.display = 'block';
+    let html = '';
+    surveyUploadedFiles.forEach((f, idx) => {
+        const statusText = f.status === 'success' ? '✓ 已识别' :
+                           f.status === 'processing' ? '⏳ 识别中...' :
+                           f.status === 'error' ? '❌ 失败' : '⏳ 待处理';
+        html += '<div class="survey-uploaded-item">' +
+            '<span class="survey-uploaded-item-name">' + escapeHtml(f.name) + '</span>' +
+            '<span class="survey-uploaded-item-status ' + (f.status || '') + '">' + statusText + '</span>' +
+            '<span class="survey-uploaded-item-remove" onclick="removeSurveyUploadedFile(' + idx + ')" title="移除">×</span>' +
+            '</div>';
+    });
+    itemsEl.innerHTML = html;
+}
+
+// 移除已上传文件
+function removeSurveyUploadedFile(idx) {
+    if (idx < 0 || idx >= surveyUploadedFiles.length) return;
+    surveyUploadedFiles.splice(idx, 1);
+    renderSurveyUploadedList();
+}
+
+// 上传页面文件选择处理（支持多文件，逐个上传+AI提取）
 async function onSurveyFileSelected2(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
     const statusEl = document.getElementById('surveyUploadStatus2');
-    statusEl.style.display = 'block';
-    statusEl.className = 'survey-upload-status';
-    statusEl.innerHTML = '正在上传 ' + escapeHtml(file.name) + '...';
 
-    try {
-        // 1. 上传文件到临时目录
-        const formData = new FormData();
-        formData.append('file', file);
-        const uploadResp = await fetch('/api/v1/survey/upload', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + authToken },
-            body: formData
-        });
-        const uploadData = await uploadResp.json();
-        if (!uploadResp.ok || !uploadData.file_path) {
-            throw new Error(uploadData.detail || '上传失败');
+    // 逐个处理文件
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // 检查是否已上传过同名文件
+        if (surveyUploadedFiles.some(f => f.name === file.name)) {
+            showToast('文件「' + file.name + '」已上传过，跳过', 2000);
+            continue;
         }
+        // 添加到列表（processing 状态）
+        const fileEntry = { name: file.name, status: 'processing' };
+        surveyUploadedFiles.push(fileEntry);
+        renderSurveyUploadedList();
 
-        statusEl.innerHTML = '上传成功，AI 正在识别文档内容...';
-
-        // 2. 调用 AI 提取
-        const extractResp = await fetch('/api/v1/survey/extract', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
-            body: JSON.stringify({ file_path: uploadData.file_path, filename: file.name })
-        });
-        const extractData = await extractResp.json();
-
-        if (extractResp.ok && extractData.success && extractData.fields) {
-            // 3. 用提取的数据更新 localStorage 中的调研数据
-            const saved = localStorage.getItem('surveyData');
-            const surveyData = saved ? JSON.parse(saved) : {};
-            const fieldMap = {
-                'company_name': 'sv_company_name',
-                'cert_other': 'sv_cert_other',
-                'chairman': 'sv_chairman',
-                'legal_rep': 'sv_legal_rep',
-                'gm': 'sv_gm',
-                'deputy_gm': 'sv_deputy_gm',
-                'mgmt_rep': 'sv_mgmt_rep',
-                'leader_group_leader': 'sv_leader_group_leader',
-                'leader_group_members': 'sv_leader_group_members',
-                'iso_office_head': 'sv_iso_office_head',
-                'iso_office_members': 'sv_iso_office_members',
-                'auditors': 'sv_auditors',
-                'products': 'sv_products',
-                'process_flow': 'sv_process_flow',
-                'location': 'sv_location',
-                'area': 'sv_area',
-                'building_area': 'sv_building_area',
-                'staff_total': 'sv_staff_total',
-                'staff_mgmt': 'sv_staff_mgmt',
-                'staff_edu': 'sv_staff_edu',
-                'equipment': 'sv_equipment',
-                'customers': 'sv_customers',
-                'address': 'sv_address',
-                'contact': 'sv_contact',
-                'phone': 'sv_phone',
-                'fax': 'sv_fax',
-                'mobile': 'sv_mobile',
-                'purpose': 'sv_purpose',
-                'quality_policy': 'sv_quality_policy',
-                'quality_goal': 'sv_quality_goal',
-                'design_dev': 'sv_design_dev',
-                'filler_name': 'sv_filler_name',
-                'filler_phone': 'sv_filler_phone',
-            };
-            let filled = [];
-            Object.keys(fieldMap).forEach(key => {
-                const inputId = fieldMap[key];
-                if (extractData.fields[key]) {
-                    surveyData[inputId] = extractData.fields[key];
-                    filled.push(key);
-                }
+        try {
+            // 1. 上传文件到临时目录
+            const formData = new FormData();
+            formData.append('file', file);
+            const uploadResp = await fetch('/api/v1/survey/upload', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + authToken },
+                body: formData
             });
-            // 证书复选框
-            if (Array.isArray(extractData.fields.certs)) {
-                surveyData.sv_certs = extractData.fields.certs;
-                if (!filled.includes('certs')) filled.push('certs');
+            const uploadData = await uploadResp.json();
+            if (!uploadResp.ok || !uploadData.file_path) {
+                throw new Error(uploadData.detail || '上传失败');
             }
-            // 机构设置
-            if (extractData.fields.org && typeof extractData.fields.org === 'object') {
-                surveyData.sv_org = {};
-                Object.keys(extractData.fields.org).forEach(funcKey => {
-                    surveyData.sv_org[funcKey + '_dept'] = extractData.fields.org[funcKey].dept || '';
-                    surveyData.sv_org[funcKey + '_head'] = extractData.fields.org[funcKey].head || '';
-                });
-                if (!filled.includes('org')) filled.push('org');
-            }
-            localStorage.setItem('surveyData', JSON.stringify(surveyData));
 
+            // 2. 调用 AI 提取
+            const extractResp = await fetch('/api/v1/survey/extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+                body: JSON.stringify({ file_path: uploadData.file_path, filename: file.name })
+            });
+            const extractData = await extractResp.json();
+
+            if (extractResp.ok && extractData.success && extractData.fields) {
+                // 3. 用提取的数据更新 localStorage 中的调研数据
+                const saved = localStorage.getItem('surveyData');
+                const surveyData = saved ? JSON.parse(saved) : {};
+                const fieldMap = {
+                    'company_name': 'sv_company_name',
+                    'cert_other': 'sv_cert_other',
+                    'chairman': 'sv_chairman',
+                    'legal_rep': 'sv_legal_rep',
+                    'gm': 'sv_gm',
+                    'deputy_gm': 'sv_deputy_gm',
+                    'mgmt_rep': 'sv_mgmt_rep',
+                    'leader_group_leader': 'sv_leader_group_leader',
+                    'leader_group_members': 'sv_leader_group_members',
+                    'iso_office_head': 'sv_iso_office_head',
+                    'iso_office_members': 'sv_iso_office_members',
+                    'auditors': 'sv_auditors',
+                    'products': 'sv_products',
+                    'process_flow': 'sv_process_flow',
+                    'location': 'sv_location',
+                    'area': 'sv_area',
+                    'building_area': 'sv_building_area',
+                    'staff_total': 'sv_staff_total',
+                    'staff_mgmt': 'sv_staff_mgmt',
+                    'staff_edu': 'sv_staff_edu',
+                    'equipment': 'sv_equipment',
+                    'customers': 'sv_customers',
+                    'address': 'sv_address',
+                    'contact': 'sv_contact',
+                    'phone': 'sv_phone',
+                    'fax': 'sv_fax',
+                    'mobile': 'sv_mobile',
+                    'purpose': 'sv_purpose',
+                    'quality_policy': 'sv_quality_policy',
+                    'quality_goal': 'sv_quality_goal',
+                    'design_dev': 'sv_design_dev',
+                    'filler_name': 'sv_filler_name',
+                    'filler_phone': 'sv_filler_phone',
+                };
+                Object.keys(fieldMap).forEach(key => {
+                    const inputId = fieldMap[key];
+                    if (extractData.fields[key]) {
+                        // 只在原值为空时填充，避免覆盖用户手动填写的数据
+                        if (!surveyData[inputId]) {
+                            surveyData[inputId] = extractData.fields[key];
+                        }
+                    }
+                });
+                // 证书复选框（合并）
+                if (Array.isArray(extractData.fields.certs)) {
+                    const existingCerts = Array.isArray(surveyData.sv_certs) ? surveyData.sv_certs : [];
+                    surveyData.sv_certs = Array.from(new Set([...existingCerts, ...extractData.fields.certs]));
+                }
+                // 机构设置（合并）
+                if (extractData.fields.org && typeof extractData.fields.org === 'object') {
+                    if (!surveyData.sv_org) surveyData.sv_org = {};
+                    Object.keys(extractData.fields.org).forEach(funcKey => {
+                        if (!surveyData.sv_org[funcKey + '_dept']) {
+                            surveyData.sv_org[funcKey + '_dept'] = extractData.fields.org[funcKey].dept || '';
+                        }
+                        if (!surveyData.sv_org[funcKey + '_head']) {
+                            surveyData.sv_org[funcKey + '_head'] = extractData.fields.org[funcKey].head || '';
+                        }
+                    });
+                }
+                localStorage.setItem('surveyData', JSON.stringify(surveyData));
+                fileEntry.status = 'success';
+            } else {
+                fileEntry.status = 'error';
+            }
+        } catch (error) {
+            console.error('[调研上传] 错误:', error);
+            fileEntry.status = 'error';
+        }
+        renderSurveyUploadedList();
+    }
+
+    // 显示汇总状态
+    const successCount = surveyUploadedFiles.filter(f => f.status === 'success').length;
+    const errorCount = surveyUploadedFiles.filter(f => f.status === 'error').length;
+    if (statusEl) {
+        statusEl.style.display = 'block';
+        if (errorCount === 0) {
             statusEl.className = 'survey-upload-status success';
-            statusEl.innerHTML = '✓ AI 已识别并更新 ' + filled.length + ' 个字段：<br>' +
-                filled.map(f => {
-                    const labels = {
-                        'company_name':'公司名称','chairman':'董事长','gm':'总经理','mgmt_rep':'管理者代表',
-                        'products':'产品','address':'地址','phone':'电话','purpose':'宗旨',
-                        'quality_policy':'质量方针','quality_goal':'质量目标','certs':'证书','org':'机构设置'
-                    };
-                    return labels[f] || f;
-                }).join('、');
+            statusEl.innerHTML = '✓ 共上传 ' + successCount + ' 个文件，AI 已识别并补充调研数据';
         } else {
             statusEl.className = 'survey-upload-status error';
-            statusEl.innerHTML = '❌ AI 识别失败：' + (extractData.detail || '未知错误') + '<br><span style="font-size:12px;">可继续手动填写或跳过</span>';
+            statusEl.innerHTML = '⚠️ ' + successCount + ' 个成功，' + errorCount + ' 个失败，可继续或重新上传';
         }
-    } catch (error) {
-        console.error('[调研上传] 错误:', error);
-        statusEl.className = 'survey-upload-status error';
-        statusEl.innerHTML = '❌ ' + error.message + '<br><span style="font-size:12px;">可继续手动填写或跳过</span>';
     }
 
     // 清空 input，允许重复上传

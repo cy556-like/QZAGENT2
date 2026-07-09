@@ -525,24 +525,28 @@
 
         <!-- 文件上传页面（填写完毕后跳转到此） -->
         <div class="survey-page" id="surveyUploadPage" style="display:none;">
-            <div class="survey-header">
-                <h2>📤 上传体系文件</h2>
+            <div class="survey-upload-header">
+                <h2>📤 上传体系文件（选填）</h2>
                 <p>上传质量手册，程序文件，三层次文件，记录表格等文档，AI 将自动识别并填充表单中对应的信息</p>
             </div>
-            <div class="survey-body" style="max-width:700px; padding:40px;">
+            <div class="survey-body">
                 <div class="survey-section survey-upload-section">
-                    <h3 class="survey-section-title">📎 上传体系文件（选填）</h3>
-                    <p class="survey-upload-hint">上传质量手册，程序文件，三层次文件，记录表格等文档，AI 将自动识别并填充表单中对应的信息</p>
                     <div class="survey-upload-zone" id="surveyUploadZone2" onclick="document.getElementById('surveyFileInput2').click()">
                         <div class="survey-upload-icon">📤</div>
                         <div class="survey-upload-text">点击上传文件</div>
-                        <div class="survey-upload-formats">支持 PDF、DOCX、DOC、TXT 格式</div>
+                        <div class="survey-upload-formats">支持 PDF、DOCX、DOC、TXT 格式，可上传多个文件</div>
                     </div>
-                    <input type="file" id="surveyFileInput2" accept=".pdf,.docx,.doc,.txt" style="display:none;" onchange="onSurveyFileSelected2(event)">
+                    <input type="file" id="surveyFileInput2" accept=".pdf,.docx,.doc,.txt" multiple style="display:none;" onchange="onSurveyFileSelected2(event)">
+                    <!-- 已上传文件列表 -->
+                    <div class="survey-uploaded-list" id="surveyUploadedList" style="display:none;">
+                        <div class="survey-uploaded-list-title">已上传文件：</div>
+                        <div id="surveyUploadedListItems"></div>
+                    </div>
+                    <!-- 当前上传/AI识别状态 -->
                     <div class="survey-upload-status" id="surveyUploadStatus2" style="display:none;"></div>
                 </div>
                 <!-- 提交按钮 -->
-                <div class="survey-submit-area" style="margin-top:30px;">
+                <div class="survey-submit-area">
                     <button class="survey-submit-btn" onclick="finishSurveyUpload()">✓ 完成，进入对话</button>
                     <button class="survey-draft-btn" onclick="finishSurveyUpload()">⏭️ 跳过上传</button>
                 </div>
