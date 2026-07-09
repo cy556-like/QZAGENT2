@@ -4100,7 +4100,7 @@ function generateDocument(type) {
                         'Authorization': 'Bearer ' + authToken,
                         'Accept': 'text/event-stream'
                     },
-                    body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '' })
+                    body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '' })
                 });
 
                 if (!genResp.ok) {

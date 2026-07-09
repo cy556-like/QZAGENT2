@@ -3452,7 +3452,13 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
     if not os.path.exists(os.path.join(_SCSCRIPTS_DIR, "generate_manual.py")):
         raise HTTPException(status_code=500, detail=f"SCskill 模块未找到: {_SCSCRIPTS_DIR}")
 
+    # 生成手册保存到 data/export/{session_id}/ 子目录
+    # 这样删除对话时会自动清理对应的导出文件
     export_dir = os.path.join(settings.DATA_DIR, "export")
+    # 从 body 获取 session_id（如果有）
+    session_id_for_export = body.get("session_id", "")
+    if session_id_for_export:
+        export_dir = os.path.join(export_dir, session_id_for_export)
     os.makedirs(export_dir, exist_ok=True)
 
     current_model = get_current_model() or "glm-5.2"

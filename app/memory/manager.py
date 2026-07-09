@@ -437,8 +437,16 @@ def delete_chat(username: str, chat_id: str) -> bool:
     chats = _load_user_chats(username)
     chats = [c for c in chats if c["chat_id"] != chat_id]
     _save_user_chats(username, chats)
-    # 同时清除对话历史文件
+    # 同时清除对话历史（内存缓存 + 磁盘文件）
     clear_session_history(chat_id)
+    # 删除磁盘上的对话历史文件
+    conv_file = os.path.join(settings.DATA_DIR, "conversations", f"{chat_id}.json")
+    if os.path.exists(conv_file):
+        try:
+            os.remove(conv_file)
+            logger.info(f"已删除对话历史文件: {conv_file}")
+        except Exception as e:
+            logger.warning(f"删除对话历史文件失败: {e}")
     return True
 
 
