@@ -1126,8 +1126,8 @@ window.addEventListener('popstate', function(e) {
     const chatContent = document.getElementById('chatContent');
     const sidebar = document.getElementById('sidebar');
 
-    // 处理调研表单/帮助/外部知识库页面的后退
-    if (e.state && (e.state.page === 'survey' || e.state.page === 'help' || e.state.page === 'external_kb')) {
+    // 处理调研表单/上传页面/帮助/外部知识库页面的后退
+    if (e.state && (e.state.page === 'survey' || e.state.page === 'survey_upload' || e.state.page === 'help' || e.state.page === 'external_kb')) {
         // 前进到帮助/外部知识库页面（用户按了前进按钮）
         if (currentUser && authToken) {
             loginModal.classList.remove('show');
@@ -1135,19 +1135,29 @@ window.addEventListener('popstate', function(e) {
             document.body.classList.add('body-chat-mode');
             if (chatContent) chatContent.style.display = 'none';
             if (kbPage) kbPage.style.display = 'none';
+            const surveyPage = document.getElementById('surveyPage');
+            const surveyUploadPage = document.getElementById('surveyUploadPage');
             if (e.state.page === 'help') {
                 if (helpPage) helpPage.style.display = '';
                 if (externalKbPage) externalKbPage.style.display = 'none';
-                const surveyPage = document.getElementById('surveyPage');
                 if (surveyPage) surveyPage.style.display = 'none';
+                if (surveyUploadPage) surveyUploadPage.style.display = 'none';
             } else if (e.state.page === 'external_kb') {
                 if (externalKbPage) externalKbPage.style.display = '';
                 if (helpPage) helpPage.style.display = 'none';
-                const surveyPage = document.getElementById('surveyPage');
                 if (surveyPage) surveyPage.style.display = 'none';
+                if (surveyUploadPage) surveyUploadPage.style.display = 'none';
             } else if (e.state.page === 'survey') {
-                const surveyPage = document.getElementById('surveyPage');
                 if (surveyPage) surveyPage.style.display = 'block';
+                if (surveyUploadPage) surveyUploadPage.style.display = 'none';
+                if (helpPage) helpPage.style.display = 'none';
+                if (externalKbPage) externalKbPage.style.display = 'none';
+                if (kbPage) kbPage.style.display = 'none';
+                if (chatContent) chatContent.style.display = 'none';
+                if (sidebar) sidebar.style.display = '';
+            } else if (e.state.page === 'survey_upload') {
+                if (surveyUploadPage) surveyUploadPage.style.display = 'flex';
+                if (surveyPage) surveyPage.style.display = 'none';
                 if (helpPage) helpPage.style.display = 'none';
                 if (externalKbPage) externalKbPage.style.display = 'none';
                 if (kbPage) kbPage.style.display = 'none';
@@ -1186,6 +1196,8 @@ window.addEventListener('popstate', function(e) {
             if (externalKbPage) externalKbPage.style.display = 'none';
             const surveyPage = document.getElementById('surveyPage');
             if (surveyPage) surveyPage.style.display = 'none';
+            const surveyUploadPage = document.getElementById('surveyUploadPage');
+            if (surveyUploadPage) surveyUploadPage.style.display = 'none';
             if (chatContent) chatContent.style.display = 'flex';
             if (sidebar) sidebar.style.display = '';
         } else {
@@ -3745,10 +3757,21 @@ function saveSurveyData() {
     if (!data.sv_filler_phone) { showToast('请填写填写人手机', 3000); return; }
     // 保存到 localStorage
     localStorage.setItem('surveyData', JSON.stringify(data));
-    // 隐藏表单，显示聊天界面
+    // 隐藏调研表单，显示文件上传页面
     const surveyPage = document.getElementById('surveyPage');
-    const chatContent = document.getElementById('chatContent');
+    const surveyUploadPage = document.getElementById('surveyUploadPage');
     if (surveyPage) surveyPage.style.display = 'none';
+    if (surveyUploadPage) surveyUploadPage.style.display = 'flex';
+    // 更新 history
+    history.pushState({page: 'survey_upload'}, '');
+    showToast('✓ 体系调研信息已保存', 2000);
+}
+
+// 从上传页面进入对话
+function finishSurveyUpload() {
+    const surveyUploadPage = document.getElementById('surveyUploadPage');
+    const chatContent = document.getElementById('chatContent');
+    if (surveyUploadPage) surveyUploadPage.style.display = 'none';
     if (chatContent) chatContent.style.display = 'flex';
     // 显示欢迎页
     const welcomeEl = document.getElementById('welcomeCenter');
@@ -3769,6 +3792,127 @@ function saveSurveyData() {
         loadChatList();
         showToast('✓ 体系调研信息已保存，点击左侧按钮可一键生成文档', 3000);
     }
+}
+
+// 上传页面文件选择处理（上传后 AI 提取信息并更新表单）
+async function onSurveyFileSelected2(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('surveyUploadStatus2');
+    statusEl.style.display = 'block';
+    statusEl.className = 'survey-upload-status';
+    statusEl.innerHTML = '正在上传 ' + escapeHtml(file.name) + '...';
+
+    try {
+        // 1. 上传文件到临时目录
+        const formData = new FormData();
+        formData.append('file', file);
+        const uploadResp = await fetch('/api/v1/survey/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + authToken },
+            body: formData
+        });
+        const uploadData = await uploadResp.json();
+        if (!uploadResp.ok || !uploadData.file_path) {
+            throw new Error(uploadData.detail || '上传失败');
+        }
+
+        statusEl.innerHTML = '上传成功，AI 正在识别文档内容...';
+
+        // 2. 调用 AI 提取
+        const extractResp = await fetch('/api/v1/survey/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken },
+            body: JSON.stringify({ file_path: uploadData.file_path, filename: file.name })
+        });
+        const extractData = await extractResp.json();
+
+        if (extractResp.ok && extractData.success && extractData.fields) {
+            // 3. 用提取的数据更新 localStorage 中的调研数据
+            const saved = localStorage.getItem('surveyData');
+            const surveyData = saved ? JSON.parse(saved) : {};
+            const fieldMap = {
+                'company_name': 'sv_company_name',
+                'cert_other': 'sv_cert_other',
+                'chairman': 'sv_chairman',
+                'legal_rep': 'sv_legal_rep',
+                'gm': 'sv_gm',
+                'deputy_gm': 'sv_deputy_gm',
+                'mgmt_rep': 'sv_mgmt_rep',
+                'leader_group_leader': 'sv_leader_group_leader',
+                'leader_group_members': 'sv_leader_group_members',
+                'iso_office_head': 'sv_iso_office_head',
+                'iso_office_members': 'sv_iso_office_members',
+                'auditors': 'sv_auditors',
+                'products': 'sv_products',
+                'process_flow': 'sv_process_flow',
+                'location': 'sv_location',
+                'area': 'sv_area',
+                'building_area': 'sv_building_area',
+                'staff_total': 'sv_staff_total',
+                'staff_mgmt': 'sv_staff_mgmt',
+                'staff_edu': 'sv_staff_edu',
+                'equipment': 'sv_equipment',
+                'customers': 'sv_customers',
+                'address': 'sv_address',
+                'contact': 'sv_contact',
+                'phone': 'sv_phone',
+                'fax': 'sv_fax',
+                'mobile': 'sv_mobile',
+                'purpose': 'sv_purpose',
+                'quality_policy': 'sv_quality_policy',
+                'quality_goal': 'sv_quality_goal',
+                'design_dev': 'sv_design_dev',
+                'filler_name': 'sv_filler_name',
+                'filler_phone': 'sv_filler_phone',
+            };
+            let filled = [];
+            Object.keys(fieldMap).forEach(key => {
+                const inputId = fieldMap[key];
+                if (extractData.fields[key]) {
+                    surveyData[inputId] = extractData.fields[key];
+                    filled.push(key);
+                }
+            });
+            // 证书复选框
+            if (Array.isArray(extractData.fields.certs)) {
+                surveyData.sv_certs = extractData.fields.certs;
+                if (!filled.includes('certs')) filled.push('certs');
+            }
+            // 机构设置
+            if (extractData.fields.org && typeof extractData.fields.org === 'object') {
+                surveyData.sv_org = {};
+                Object.keys(extractData.fields.org).forEach(funcKey => {
+                    surveyData.sv_org[funcKey + '_dept'] = extractData.fields.org[funcKey].dept || '';
+                    surveyData.sv_org[funcKey + '_head'] = extractData.fields.org[funcKey].head || '';
+                });
+                if (!filled.includes('org')) filled.push('org');
+            }
+            localStorage.setItem('surveyData', JSON.stringify(surveyData));
+
+            statusEl.className = 'survey-upload-status success';
+            statusEl.innerHTML = '✓ AI 已识别并更新 ' + filled.length + ' 个字段：<br>' +
+                filled.map(f => {
+                    const labels = {
+                        'company_name':'公司名称','chairman':'董事长','gm':'总经理','mgmt_rep':'管理者代表',
+                        'products':'产品','address':'地址','phone':'电话','purpose':'宗旨',
+                        'quality_policy':'质量方针','quality_goal':'质量目标','certs':'证书','org':'机构设置'
+                    };
+                    return labels[f] || f;
+                }).join('、');
+        } else {
+            statusEl.className = 'survey-upload-status error';
+            statusEl.innerHTML = '❌ AI 识别失败：' + (extractData.detail || '未知错误') + '<br><span style="font-size:12px;">可继续手动填写或跳过</span>';
+        }
+    } catch (error) {
+        console.error('[调研上传] 错误:', error);
+        statusEl.className = 'survey-upload-status error';
+        statusEl.innerHTML = '❌ ' + error.message + '<br><span style="font-size:12px;">可继续手动填写或跳过</span>';
+    }
+
+    // 清空 input，允许重复上传
+    event.target.value = '';
 }
 
 function saveSurveyDraft() {
