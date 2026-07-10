@@ -4302,7 +4302,7 @@ function generateDocument(type) {
                             doneItem.className = 'gen-mod-item';
                             doneItem.style.background = '#e8f5e9';
                             doneItem.style.borderColor = '#4caf50';
-                            doneItem.innerHTML = `<span class="gen-mod-badge" style="background:#4caf50;color:#fff;">✓ ${data.dept}</span><span class="gen-mod-preview">${data.template_source} / ${data.template_filename}（${data.modifications_count} 处修改）</span>`;
+                            doneItem.innerHTML = `<span class="gen-mod-badge" style="background:#4caf50;color:#fff;">✓ ${data.display_name || data.dept}</span><span class="gen-mod-preview">${data.template_source}（${data.modifications_count} 处修改）</span>`;
                             list.appendChild(doneItem);
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
                             scrollToBottom();
@@ -4314,7 +4314,7 @@ function generateDocument(type) {
                             const failedFiles = data.failed_files || [];
                             let downloadHtml = '';
                             files.forEach(f => {
-                                downloadHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${f.dept} 程序文件</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                                downloadHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${f.display_name || f.dept}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
                             });
                             let failedHtml = '';
                             if (failedFiles.length > 0) {
