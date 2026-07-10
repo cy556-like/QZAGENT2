@@ -3829,9 +3829,10 @@ if _CXSCRIPTS_DIR not in _sys_top.path:
     _sys_top.path.insert(0, _CXSCRIPTS_DIR)
 
 
-@router.post("/generate/procedure", summary="一键生成程序文件（AI 驱动，SSE 流式进度）")
+@router.post("/generate/procedure", summary="一键生成程序文件（AI 驱动，SSE 流式进度，多文件批量生成）")
 async def generate_procedure_api(request: Request, username: str = Depends(require_auth)):
-    """AI 驱动生成程序文件，SSE 流式推送每一步进度。"""
+    """AI 驱动生成程序文件（批量），SSE 流式推送每一步进度。
+    查找所有部门的模板，逐个 AI 修改，返回多个下载链接。"""
     import asyncio
     import re as _re
     import sys as _sys
@@ -3858,14 +3859,14 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
     os.makedirs(export_dir, exist_ok=True)
 
     current_model = get_current_model() or "glm-5.2"
-    logger.info(f"[CXskill] AI 生成程序文件: user={username}, model={current_model}")
+    logger.info(f"[CXskill] AI 生成程序文件（批量）: user={username}, model={current_model}")
 
     async def sse_event_stream():
         async def send(evt: dict):
             return f"data: {_json.dumps(evt, ensure_ascii=False)}\n\n"
 
         try:
-            # 步骤 1
+            # 步骤 1：分析调研数据
             yield await send({
                 "type": "progress", "step": "分析调研数据",
                 "message": f"正在分析体系调研数据（公司：{survey_data.get('sv_company_name','未填写')}）...",
@@ -3879,204 +3880,218 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             else:
                 cx = importlib.import_module('generate_procedure')
 
-            # 步骤 3：查找模板
+            # 步骤 3：查找所有模板
             yield await send({
                 "type": "progress", "step": "查找模板",
-                "message": "正在查找程序文件模板（企业内部文件→全质知识库）...",
+                "message": "正在查找所有部门的程序文件模板...",
                 "progress": 10
             })
             await asyncio.sleep(0.1)
-            template_path, need_convert, template_source, template_subdir = cx.find_template(
+            all_templates = cx.find_all_templates(
                 agent_id=current_agent_id, documents_dir=settings.DOCUMENTS_DIR)
-            if template_path is None:
+            if not all_templates:
                 yield await send({
                     "type": "error",
-                    "message": "未找到程序文件模板。请在企业内部文件知识库[程序文件]分类或全质知识库[体系文件/程序文件]下上传 .docx/.doc 模板。"
+                    "message": "未找到任何程序文件模板。请在企业内部文件知识库[程序文件]分类或全质知识库[体系文件/程序文件]下上传 .docx/.doc 模板。"
                 })
                 return
 
-            template_filename = os.path.basename(str(template_path))
-            source_label = {'internal': '企业内部文件知识库', 'external': '全质知识库'}.get(template_source, '未知')
+            total_templates = len(all_templates)
             yield await send({
                 "type": "progress", "step": "已找到模板",
-                "message": f"模板来源：{source_label}（{template_filename}）\n部门目录：{template_subdir}",
+                "message": f"共找到 {total_templates} 个模板，将逐个生成程序文件",
                 "progress": 12
             })
-
-            # 步骤 4：.doc 转 .docx
-            actual_template = template_path
-            if need_convert:
+            # 列出所有找到的模板
+            for t in all_templates:
+                source_label = {'internal': '企业内部文件', 'external': '全质知识库'}.get(t['source'], '未知')
                 yield await send({
-                    "type": "progress", "step": "转换模板格式",
-                    "message": "模板为 .doc 格式，正在转换为 .docx ...",
-                    "progress": 15
+                    "type": "progress", "step": "模板列表",
+                    "message": f"  [{source_label}] {t['dept']}/{t['filename']}",
+                    "progress": 12
                 })
-                converted = await asyncio.to_thread(cx.convert_doc_to_docx, template_path)
-                if not converted:
-                    yield await send({"type": "error", "message": ".doc 模板转换失败"})
-                    return
-                actual_template = converted
 
-            # 步骤 5：加载模板
-            yield await send({
-                "type": "progress", "step": "加载模板",
-                "message": f"正在加载模板文件: {template_filename} ...",
-                "progress": 20
-            })
-            await asyncio.sleep(0.1)
-            from docx import Document
-            doc = await asyncio.to_thread(Document, str(actual_template))
-
-            # 步骤 6：提取概览
-            yield await send({
-                "type": "progress", "step": "提取模板结构",
-                "message": f"正在提取模板结构（{len(doc.paragraphs)} 段，{len(doc.tables)} 表）...",
-                "progress": 30
-            })
-            overview = await asyncio.to_thread(cx.extract_template_overview, doc)
-            overview_text = cx.format_overview_for_llm(overview)
             survey_text = cx.format_survey_for_llm(survey_data)
-            await asyncio.sleep(0.1)
-
-            # 步骤 7：构造提示词
-            yield await send({
-                "type": "progress", "step": "构造 AI 提示词",
-                "message": f"已提取 {len(overview['paragraphs'])} 个非空段落，正在构造 AI 分析提示词...",
-                "progress": 40
-            })
-            system_prompt, user_prompt = cx.build_llm_prompt(overview_text, survey_text, template_filename)
-            await asyncio.sleep(0.1)
-
-            # 步骤 8：调用 LLM
-            yield await send({
-                "type": "progress", "step": "调用 AI 模型",
-                "message": f"正在调用 AI 模型 [{current_model}] 分析模板并生成修改方案...\n（AI 会逐条输出修改方案，每条都会实时显示在下方）",
-                "progress": 50
-            })
-            # 模板来源
-            yield await send({
-                "type": "progress", "step": "模板来源",
-                "message": f"基于【{source_label}】的程序文件模板生成\n模板文件：{template_filename}\n部门：{template_subdir}",
-                "progress": 52
-            })
-            yield await send({
-                "type": "progress", "step": "接收 AI 修改方案",
-                "message": "正在等待 AI 输出修改方案...",
-                "progress": 55
-            })
-            yield await send({
-                "type": "modifications_start",
-                "message": "AI 正在逐条输出修改方案（实时应用中）："
-            })
-
-            llm = create_llm(deep_think=True)
-            messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-
-            stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
-                     'header_replace': 0, 'unknown': 0, 'failed': 0}
-            modifications_count = 0
-            buffer = ''
-            llm_total_chars = 0
-            try:
-                async for chunk in llm.astream(messages):
-                    if not chunk:
-                        continue
-                    if hasattr(chunk, 'content'):
-                        token = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
-                    else:
-                        token = str(chunk)
-                    if not token:
-                        continue
-                    llm_total_chars += len(token)
-                    buffer += token
-
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        line = line.strip()
-                        if not line or line == '===END===':
-                            buffer = ''
-                            break
-                        mod = cx.parse_ndjson_line(line)
-                        if mod is None:
-                            continue
-
-                        modifications_count += 1
-                        progress = 55 + min(int(modifications_count * 1.5), 40)
-                        try:
-                            mod_type = mod.get('type', '')
-                            reason = (mod.get('reason', '') or '')[:80]
-                            if mod_type == 'paragraph':
-                                idx = int(mod.get('index', -1))
-                                new_text = mod.get('new_text', '')
-                                if cx.apply_paragraph_replace(doc, idx, new_text):
-                                    stats['paragraph'] += 1
-                                    yield await send({"type": "modification", "mod_type": "paragraph",
-                                        "location": f"段落 P{idx}", "reason": reason,
-                                        "preview": (new_text or '')[:80], "progress": progress, "index": modifications_count})
-                                else:
-                                    stats['failed'] += 1
-                            elif mod_type == 'table_cell':
-                                ti = int(mod.get('table', -1)); ri = int(mod.get('row', -1)); ci = int(mod.get('col', -1))
-                                new_text = mod.get('new_text', '')
-                                if cx.apply_table_cell_replace(doc, ti, ri, ci, new_text):
-                                    stats['table_cell'] += 1
-                                    yield await send({"type": "modification", "mod_type": "table_cell",
-                                        "location": f"表格 T{ti} 第{ri+1}行第{ci+1}列", "reason": reason,
-                                        "preview": (new_text or '')[:80], "progress": progress, "index": modifications_count})
-                                else:
-                                    stats['failed'] += 1
-                            elif mod_type == 'global_replace':
-                                old = mod.get('old', ''); new = mod.get('new', '')
-                                n = cx.apply_global_replace(doc, old, new)
-                                stats['global_replace'] += n
-                                yield await send({"type": "modification", "mod_type": "global_replace",
-                                    "location": "全文", "reason": reason,
-                                    "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
-                            elif mod_type == 'header_replace':
-                                old = mod.get('old', ''); new = mod.get('new', '')
-                                n = cx.apply_header_replace(doc, old, new)
-                                stats['header_replace'] += n
-                                yield await send({"type": "modification", "mod_type": "header_replace",
-                                    "location": "页眉/页脚", "reason": reason,
-                                    "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
-                            else:
-                                stats['unknown'] += 1
-                        except Exception as e:
-                            stats['failed'] += 1
-                            logger.warning(f"[CXskill] 修改 #{modifications_count} 失败: {e}")
-            except Exception as stream_err:
-                err_msg = str(stream_err)
-                if 'timeout' in err_msg.lower():
-                    yield await send({"type": "error", "message": "AI 模型调用超时"})
-                    return
-                logger.exception(f"[CXskill] LLM 流式接收异常: {stream_err}")
-            logger.info(f"[CXskill] LLM 流式接收完成，共 {llm_total_chars} 字符，{modifications_count} 个修改方案")
-
-            if modifications_count == 0:
-                yield await send({"type": "error", "message": "AI 未能生成有效的修改方案"})
-                return
-
-            # 步骤 9：保存
-            yield await send({
-                "type": "progress", "step": "保存文件",
-                "message": f"AI 已输出 {modifications_count} 个修改方案全部应用完成，正在保存文件...",
-                "progress": 97
-            })
             company_name = (survey_data.get('sv_company_name') or '企业').strip()
             safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
             today_str = datetime.now().strftime("%Y%m%d")
-            filename = f"程序文件_{safe_name}_{today_str}.docx"
-            output_path = os.path.join(export_dir, filename)
-            await asyncio.to_thread(doc.save, output_path)
-            logger.info(f"[CXskill] 程序文件已生成: {output_path}")
 
-            # 模板来源文本
-            template_source_text = f"基于【{source_label}】的程序文件模板生成\n模板文件：{template_filename}\n部门：{template_subdir}"
-            download_url = f"/api/v1/documents/export-download/{filename}"
+            generated_files = []
+            failed_files = []
+
+            # 逐个处理每个模板
+            for ti, tmpl in enumerate(all_templates):
+                dept = tmpl['dept']
+                filename_tmpl = tmpl['filename']
+                source = tmpl['source']
+                source_label = {'internal': '企业内部文件知识库', 'external': '全质知识库'}.get(source, '未知')
+                base_progress = int(15 + (ti / total_templates) * 80)  # 15% ~ 95%
+                end_progress = int(15 + ((ti + 1) / total_templates) * 80)
+
+                yield await send({
+                    "type": "progress", "step": f"处理第 {ti+1}/{total_templates} 个：{dept}",
+                    "message": f"正在处理 [{source_label}] {dept}/{filename_tmpl}",
+                    "progress": base_progress
+                })
+
+                try:
+                    # .doc 转 .docx
+                    actual_template = tmpl['path']
+                    if tmpl['need_convert']:
+                        converted = await asyncio.to_thread(cx.convert_doc_to_docx, tmpl['path'])
+                        if not converted:
+                            yield await send({
+                                "type": "progress", "step": f"跳过 {dept}",
+                                "message": f"⚠️ {dept}/{filename_tmpl} .doc转换失败，跳过",
+                                "progress": end_progress
+                            })
+                            failed_files.append({"dept": dept, "filename": filename_tmpl, "reason": "doc转换失败"})
+                            continue
+                        actual_template = converted
+
+                    # 加载模板
+                    from docx import Document
+                    doc = await asyncio.to_thread(Document, str(actual_template))
+
+                    # 提取概览
+                    overview = await asyncio.to_thread(cx.extract_template_overview, doc)
+                    overview_text = cx.format_overview_for_llm(overview)
+
+                    # 构造提示词
+                    system_prompt, user_prompt = cx.build_llm_prompt(overview_text, survey_text, filename_tmpl)
+
+                    # AI 修改
+                    llm = create_llm(deep_think=True)
+                    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+
+                    stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
+                             'header_replace': 0, 'unknown': 0, 'failed': 0}
+                    modifications_count = 0
+                    buffer = ''
+                    try:
+                        async for chunk in llm.astream(messages):
+                            if not chunk:
+                                continue
+                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            if not token:
+                                continue
+                            buffer += token
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                line = line.strip()
+                                if not line or line == '===END===':
+                                    buffer = ''
+                                    break
+                                mod = cx.parse_ndjson_line(line)
+                                if mod is None:
+                                    continue
+                                modifications_count += 1
+                                progress = base_progress + int((modifications_count / 30) * (end_progress - base_progress) * 0.8)
+                                try:
+                                    mod_type = mod.get('type', '')
+                                    reason = (mod.get('reason', '') or '')[:60]
+                                    if mod_type == 'paragraph':
+                                        idx = int(mod.get('index', -1))
+                                        new_text = mod.get('new_text', '')
+                                        if cx.apply_paragraph_replace(doc, idx, new_text):
+                                            stats['paragraph'] += 1
+                                            yield await send({"type": "modification", "mod_type": "paragraph",
+                                                "dept": dept, "location": f"[{dept}] 段落 P{idx}",
+                                                "reason": reason, "preview": (new_text or '')[:60],
+                                                "progress": min(progress, end_progress - 2), "index": modifications_count})
+                                        else:
+                                            stats['failed'] += 1
+                                    elif mod_type == 'table_cell':
+                                        t_idx = int(mod.get('table', -1)); r_idx = int(mod.get('row', -1)); c_idx = int(mod.get('col', -1))
+                                        new_text = mod.get('new_text', '')
+                                        if cx.apply_table_cell_replace(doc, t_idx, r_idx, c_idx, new_text):
+                                            stats['table_cell'] += 1
+                                            yield await send({"type": "modification", "mod_type": "table_cell",
+                                                "dept": dept, "location": f"[{dept}] 表格 T{t_idx} 第{r_idx+1}行第{c_idx+1}列",
+                                                "reason": reason, "preview": (new_text or '')[:60],
+                                                "progress": min(progress, end_progress - 2), "index": modifications_count})
+                                        else:
+                                            stats['failed'] += 1
+                                    elif mod_type == 'global_replace':
+                                        old = mod.get('old', ''); new = mod.get('new', '')
+                                        n = cx.apply_global_replace(doc, old, new)
+                                        stats['global_replace'] += n
+                                        yield await send({"type": "modification", "mod_type": "global_replace",
+                                            "dept": dept, "location": f"[{dept}] 全文",
+                                            "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）",
+                                            "progress": min(progress, end_progress - 2), "index": modifications_count})
+                                    elif mod_type == 'header_replace':
+                                        old = mod.get('old', ''); new = mod.get('new', '')
+                                        n = cx.apply_header_replace(doc, old, new)
+                                        stats['header_replace'] += n
+                                        yield await send({"type": "modification", "mod_type": "header_replace",
+                                            "dept": dept, "location": f"[{dept}] 页眉/页脚",
+                                            "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）",
+                                            "progress": min(progress, end_progress - 2), "index": modifications_count})
+                                    else:
+                                        stats['unknown'] += 1
+                                except Exception as e:
+                                    stats['failed'] += 1
+                    except Exception as stream_err:
+                        err_msg = str(stream_err)
+                        if 'timeout' in err_msg.lower():
+                            yield await send({"type": "progress", "step": f"超时 {dept}",
+                                "message": f"⚠️ {dept} AI调用超时，跳过", "progress": end_progress})
+                            failed_files.append({"dept": dept, "filename": filename_tmpl, "reason": "AI超时"})
+                            continue
+                        logger.warning(f"[CXskill] {dept} LLM异常: {stream_err}")
+
+                    if modifications_count == 0:
+                        yield await send({"type": "progress", "step": f"跳过 {dept}",
+                            "message": f"⚠️ {dept} AI未生成修改方案，跳过", "progress": end_progress})
+                        failed_files.append({"dept": dept, "filename": filename_tmpl, "reason": "AI无方案"})
+                        continue
+
+                    # 保存文件
+                    safe_dept = _re.sub(r'[\\/:*?"<>|]', '_', dept)
+                    out_filename = f"程序文件_{safe_name}_{safe_dept}_{today_str}.docx"
+                    output_path = os.path.join(export_dir, out_filename)
+                    await asyncio.to_thread(doc.save, output_path)
+                    logger.info(f"[CXskill] 程序文件已生成: {output_path}")
+
+                    download_url = f"/api/v1/documents/export-download/{out_filename}"
+                    template_source_text = f"基于【{source_label}】模板生成\n部门：{dept}\n模板：{filename_tmpl}\n修改：{modifications_count} 处"
+
+                    generated_files.append({
+                        "filename": out_filename,
+                        "download_url": download_url,
+                        "dept": dept,
+                        "modifications_count": modifications_count,
+                        "stats": stats,
+                        "template_source_text": template_source_text
+                    })
+
+                    yield await send({
+                        "type": "file_complete",
+                        "dept": dept,
+                        "filename": out_filename,
+                        "download_url": download_url,
+                        "modifications_count": modifications_count,
+                        "template_source": source_label,
+                        "template_filename": filename_tmpl,
+                        "progress": end_progress
+                    })
+
+                except Exception as e:
+                    logger.exception(f"[CXskill] {dept} 生成异常: {e}")
+                    failed_files.append({"dept": dept, "filename": filename_tmpl, "reason": str(e)[:100]})
+                    yield await send({"type": "progress", "step": f"失败 {dept}",
+                        "message": f"❌ {dept} 生成失败: {str(e)[:80]}", "progress": end_progress})
+
+            # 最终汇总
             yield await send({
-                "type": "success", "filename": filename, "download_url": download_url,
-                "modifications_count": modifications_count, "stats": stats,
-                "model_used": current_model, "template_source_text": template_source_text, "progress": 100
+                "type": "success",
+                "total_files": len(generated_files),
+                "failed_count": len(failed_files),
+                "files": generated_files,
+                "failed_files": failed_files,
+                "model_used": current_model,
+                "progress": 100
             })
 
         except Exception as e:

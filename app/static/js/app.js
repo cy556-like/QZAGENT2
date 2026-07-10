@@ -4213,32 +4213,44 @@ function generateDocument(type) {
                             modificationLog.push({ location: data.location, preview: data.preview, reason: data.reason, mod_type: data.mod_type });
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
                             scrollToBottom();
+                        } else if (data.type === 'file_complete') {
+                            // 单个部门文件生成完成，追加到列表
+                            const list = modsEl.querySelector('.gen-mods-list') || modsEl;
+                            const doneItem = document.createElement('div');
+                            doneItem.className = 'gen-mod-item';
+                            doneItem.style.background = '#e8f5e9';
+                            doneItem.style.borderColor = '#4caf50';
+                            doneItem.innerHTML = `<span class="gen-mod-badge" style="background:#4caf50;color:#fff;">✓ ${data.dept}</span><span class="gen-mod-preview">${data.template_source} / ${data.template_filename}（${data.modifications_count} 处修改）</span>`;
+                            list.appendChild(doneItem);
+                            if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
+                            scrollToBottom();
                         } else if (data.type === 'success') {
-                            const stats = data.stats || {};
-                            const statLines = [];
-                            if (stats.paragraph) statLines.push(`段落 ${stats.paragraph} 处`);
-                            if (stats.table_cell) statLines.push(`表格 ${stats.table_cell} 处`);
-                            if (stats.global_replace) statLines.push(`全文替换 ${stats.global_replace} 处`);
-                            if (stats.header_replace) statLines.push(`页眉页脚 ${stats.header_replace} 处`);
-                            const statText = statLines.join('，') || '无修改';
+                            // 批量生成完成
                             progressBarEl.style.width = '100%';
                             stepTextEl.textContent = '完成';
                             stepTextEl.previousElementSibling.style.display = 'none';
-                            const templateSourceHtml = data.template_source_text ? '<p class="gen-success-template" style="background:#f0f7ff;padding:8px 12px;border-radius:6px;color:#15589B;font-size:13px;white-space:pre-line;margin:6px 0 10px 0;">' + data.template_source_text.replace(/</g, '&lt;') + '</p>' : '';
+                            const files = data.files || [];
+                            const failedFiles = data.failed_files || [];
+                            let downloadHtml = '';
+                            files.forEach(f => {
+                                downloadHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${f.dept} 程序文件</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                            });
+                            let failedHtml = '';
+                            if (failedFiles.length > 0) {
+                                failedHtml = `<p style="color:#e63946;font-size:12px;margin-top:8px;">⚠️ ${failedFiles.length} 个文件生成失败：${failedFiles.map(f => f.dept).join('、')}</p>`;
+                            }
                             bubbleContent.innerHTML = `
                                 <div class="gen-manual-success">
-                                    <p class="gen-success-title">✓ 程序文件已生成完成</p>
-                                    <p class="gen-success-info">使用模型：${data.model_used || '未知'} ｜ 共 ${data.modifications_count} 个修改方案</p>
-                                    ${templateSourceHtml}
-                                    <p class="gen-success-stats">修改统计：${statText}</p>
+                                    <p class="gen-success-title">✓ 程序文件批量生成完成</p>
+                                    <p class="gen-success-info">使用模型：${data.model_used || '未知'} ｜ 成功 ${data.total_files} 个${failedFiles.length > 0 ? '，失败 ' + data.failed_count + ' 个' : ''}</p>
+                                    ${downloadHtml}
+                                    ${failedHtml}
                                     <details class="gen-mods-details">
                                         <summary>查看详细修改记录（共 ${modificationLog.length} 条）</summary>
                                         <div class="gen-mods-detail-list">
                                             ${modificationLog.map(m => `<div class="gen-mod-detail-item"><span class="gen-mod-badge">${m.location || ''}</span><span class="gen-mod-preview">${(m.preview || '').replace(/</g, '&lt;')}</span>${m.reason ? `<span class="gen-mod-reason">${m.reason}</span>` : ''}</div>`).join('')}
                                         </div>
                                     </details>
-                                    <br>
-                                    <a href="${data.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载程序文件</a>
                                 </div>
                             `;
                             scrollToBottom();
