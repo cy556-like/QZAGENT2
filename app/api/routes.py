@@ -4264,7 +4264,7 @@ async def survey_extract(request: Request, username: str = Depends(require_auth)
         if len(doc_text) > 8000:
             doc_text = doc_text[:8000] + "\n...(文档内容已截断)"
         logger.info(f"[调研提取] 文档={filename}, 文本长度={len(doc_text)}")
-        extract_prompt = '你是一个企业信息提取助手。请从以下文档内容中提取企业体系调研所需的信息，并识别文件类型。\n\n请严格按照以下JSON格式输出，只输出JSON，不要有任何其他文字。如果某个字段在文档中找不到，对应的值设为空字符串。\n\n{"file_type":"文件类型，必须是以下之一：手册/程序文件/三层次文件/记录表格/其他","file_type_name":"文件类型的具体名称，如：质量手册、文件控制程序、作业指导书等","company_name":"公司全称","certs":["ISO9001"],"cert_other":"其他证书","chairman":"董事长","legal_rep":"法人代表","gm":"总经理","deputy_gm":"副总经理","mgmt_rep":"管理者代表","leader_group_leader":"贯标组长","leader_group_members":"组员","iso_office_head":"贯标办主任","iso_office_members":"成员","auditors":"内审员","products":"体系覆盖产品","process_flow":"生产流程","location":"地理位置","area":"占地面积","building_area":"建筑面积","staff_total":"正式员工人数","staff_mgmt":"管理技术人员","staff_edu":"中专以上人数","equipment":"设备情况","customers":"主要客户","address":"公司地址","contact":"联系人","phone":"电话","fax":"传真","mobile":"手机","purpose":"公司宗旨","quality_policy":"质量方针","quality_goal":"质量目标","design_dev":"有无设计开发","org":{"综合管理":{"dept":"部门","head":"负责人"},"研发技术":{"dept":"部门","head":"负责人"},"采购":{"dept":"部门","head":"负责人"},"市场":{"dept":"部门","head":"负责人"},"财务":{"dept":"部门","head":"负责人"},"制造生产":{"dept":"部门","head":"负责人"},"质量":{"dept":"部门","head":"负责人"}}}\n\n文件名：' + filename + '\n\n文档内容：\n'
+        extract_prompt = '你是一个企业信息提取助手。请从以下文档内容中提取企业体系调研所需的信息，并识别文件类型。\n\n请严格按照以下JSON格式输出，只输出JSON，不要有任何其他文字。如果某个字段在文档中找不到，对应的值设为空字符串。\n\n{"file_type":"文件类型，必须是以下之一：手册/程序文件/三层次文件/记录表格/其他","file_type_name":"文件类型的具体名称，如：质量手册、文件控制程序、作业指导书等","file_dept":"文件所属部门，必须是以下之一：总经办二级/技术部二级/生产部二级/综合管理部二级/设备部二级/财务部二级/质量部二级/采购部二级/其他。根据文件内容中的部门标识（如文件编号中的GM=总经办、RD=技术部、MF=生产部、GA=综合管理部、ED=设备部、FC=财务部、QA=质量部、PU=采购部）或文件内容判断属于哪个部门。如果无法判断则填其他。","company_name":"公司全称","certs":["ISO9001"],"cert_other":"其他证书","chairman":"董事长","legal_rep":"法人代表","gm":"总经理","deputy_gm":"副总经理","mgmt_rep":"管理者代表","leader_group_leader":"贯标组长","leader_group_members":"组员","iso_office_head":"贯标办主任","iso_office_members":"成员","auditors":"内审员","products":"体系覆盖产品","process_flow":"生产流程","location":"地理位置","area":"占地面积","building_area":"建筑面积","staff_total":"正式员工人数","staff_mgmt":"管理技术人员","staff_edu":"中专以上人数","equipment":"设备情况","customers":"主要客户","address":"公司地址","contact":"联系人","phone":"电话","fax":"传真","mobile":"手机","purpose":"公司宗旨","quality_policy":"质量方针","quality_goal":"质量目标","design_dev":"有无设计开发","org":{"综合管理":{"dept":"部门","head":"负责人"},"研发技术":{"dept":"部门","head":"负责人"},"采购":{"dept":"部门","head":"负责人"},"市场":{"dept":"部门","head":"负责人"},"财务":{"dept":"部门","head":"负责人"},"制造生产":{"dept":"部门","head":"负责人"},"质量":{"dept":"部门","head":"负责人"}}}\n\n文件名：' + filename + '\n\n文档内容：\n'
         from app.agent.core import create_llm
         from langchain_core.messages import HumanMessage, SystemMessage
         llm = create_llm(short_response=True)
@@ -4287,13 +4287,14 @@ async def survey_extract(request: Request, username: str = Depends(require_auth)
         # 提取文件类型信息
         file_type = fields.get('file_type', '')
         file_type_name = fields.get('file_type_name', '')
-        logger.info(f"[调研提取] 成功提取 {len(fields)} 个字段, 文件类型={file_type}/{file_type_name}")
+        file_dept = fields.get('file_dept', '')
+        logger.info(f"[调研提取] 成功提取 {len(fields)} 个字段, 文件类型={file_type}/{file_type_name}, 部门={file_dept}")
         try:
             os.remove(file_path)
             logger.info(f"[调研提取] 已删除临时文件: {file_path}")
         except:
             pass
-        return {"success": True, "fields": fields, "file_type": file_type, "file_type_name": file_type_name}
+        return {"success": True, "fields": fields, "file_type": file_type, "file_type_name": file_type_name, "file_dept": file_dept}
     except HTTPException:
         raise
     except Exception as e:

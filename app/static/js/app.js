@@ -3685,7 +3685,7 @@ function renderSurveyUploadedList() {
         const statusText = f.status === 'success' ? '✓ 已归类' :
                            f.status === 'processing' ? '⏳ 识别中...' :
                            f.status === 'error' ? '❌ 失败' : '⏳ 待处理';
-        const typeLabel = (f.fileType && f.fileTypeName) ? ' [' + escapeHtml(f.fileType) + '/' + escapeHtml(f.fileTypeName) + ']' : '';
+        const typeLabel = (f.fileType && f.fileDept) ? ' [' + escapeHtml(f.fileType) + '/' + escapeHtml(f.fileDept) + ']' : '';
         html += '<div class="survey-uploaded-item">' +
             '<span class="survey-uploaded-item-name">' + escapeHtml(f.name) + '<span style="color:#888;font-size:12px;">' + typeLabel + '</span></span>' +
             '<span class="survey-uploaded-item-status ' + (f.status || '') + '">' + statusText + '</span>' +
@@ -3745,18 +3745,20 @@ async function onSurveyFileSelected2(event) {
             const extractData = await extractResp.json();
 
             if (extractResp.ok && extractData.success) {
-                // 3. AI 识别出文件类型，自动上传到企业内部文件知识库
+                // 3. AI 识别出文件类型和部门，自动上传到企业内部文件知识库
                 const fileType = extractData.file_type || '其他';
                 const fileTypeName = extractData.file_type_name || '通用';
+                const fileDept = extractData.file_dept || '其他';
                 fileEntry.fileType = fileType;
                 fileEntry.fileTypeName = fileTypeName;
+                fileEntry.fileDept = fileDept;
                 if (currentAgentId) {
                     try {
                         const kbFormData = new FormData();
                         kbFormData.append('file', file);
                         kbFormData.append('agent_id', currentAgentId);
                         kbFormData.append('category', fileType);
-                        kbFormData.append('subcategory', fileTypeName);
+                        kbFormData.append('subcategory', fileDept);
                         const kbResp = await fetch('/api/v1/upload', {
                             method: 'POST',
                             headers: { 'Authorization': 'Bearer ' + authToken },
@@ -3764,7 +3766,7 @@ async function onSurveyFileSelected2(event) {
                         });
                         const kbData = await kbResp.json();
                         if (kbResp.ok && (kbData.status === 'success' || kbData.filename)) {
-                            console.log('[调研上传] 文件已保存到企业内部文件知识库: ' + fileType + '/' + fileTypeName + '/' + file.name);
+                            console.log('[调研上传] 文件已保存到企业内部文件知识库: ' + fileType + '/' + fileDept + '/' + file.name);
                             fileEntry.status = 'success';
                         } else {
                             fileEntry.status = 'error';
