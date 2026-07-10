@@ -3829,6 +3829,46 @@ if _CXSCRIPTS_DIR not in _sys_top.path:
     _sys_top.path.insert(0, _CXSCRIPTS_DIR)
 
 
+@router.post("/generate/procedure/templates", summary="列出可用的程序文件模板")
+async def list_procedure_templates(request: Request, username: str = Depends(require_auth)):
+    """列出所有可用的程序文件模板，供前端勾选。
+    如果用户上传了文件（企业内部文件有模板），直接返回这些模板并标记 auto_generate=True。
+    如果用户没上传（企业内部文件为空），返回全质知识库的模板列表供用户勾选。"""
+    import importlib
+    import sys as _sys
+    body = await request.json()
+    agent_id = body.get("agent_id", "")
+
+    if 'generate_procedure' in _sys.modules:
+        cx = importlib.reload(_sys.modules['generate_procedure'])
+    else:
+        cx = importlib.import_module('generate_procedure')
+
+    all_templates = cx.find_all_templates(agent_id=agent_id, documents_dir=settings.DOCUMENTS_DIR)
+
+    # 检查企业内部文件是否有模板
+    internal_count = sum(1 for t in all_templates if t['source'] == 'internal')
+
+    templates_list = []
+    for t in all_templates:
+        source_label = {'internal': '企业内部文件', 'external': '全质知识库'}.get(t['source'], '未知')
+        templates_list.append({
+            "dept": t['dept'],
+            "filename": t['filename'],
+            "source": t['source'],
+            "source_label": source_label,
+            "need_convert": t['need_convert'],
+        })
+
+    return {
+        "success": True,
+        "templates": templates_list,
+        "auto_generate": internal_count > 0,  # 用户上传了就自动生成，不需要勾选
+        "internal_count": internal_count,
+        "external_count": sum(1 for t in all_templates if t['source'] == 'external'),
+    }
+
+
 @router.post("/generate/procedure", summary="一键生成程序文件（AI 驱动，SSE 流式进度，多文件批量生成）")
 async def generate_procedure_api(request: Request, username: str = Depends(require_auth)):
     """AI 驱动生成程序文件（批量），SSE 流式推送每一步进度。
@@ -3846,6 +3886,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
     survey_data = body.get("survey_data", {})
     current_agent_id = body.get("agent_id", "")
     session_id_for_export = body.get("session_id", "")
+    selected_templates = body.get("selected_templates", None)  # 用户勾选的模板列表，None=全部
 
     if not survey_data:
         raise HTTPException(status_code=400, detail="未提供体系调研数据")
@@ -3889,6 +3930,12 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             await asyncio.sleep(0.1)
             all_templates = cx.find_all_templates(
                 agent_id=current_agent_id, documents_dir=settings.DOCUMENTS_DIR)
+
+            # 如果用户勾选了模板，只保留勾选的
+            if selected_templates and isinstance(selected_templates, list) and len(selected_templates) > 0:
+                all_templates = [t for t in all_templates
+                                 if f"{t['dept']}/{t['filename']}" in selected_templates]
+
             if not all_templates:
                 yield await send({
                     "type": "error",

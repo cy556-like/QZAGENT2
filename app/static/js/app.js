@@ -4128,7 +4128,7 @@ function generateDocument(type) {
         return;
     }
 
-    // 一键生成程序文件：调用 CXskill API（SSE 流式接收进度）
+    // 一键生成程序文件：先查模板→判断是否需要勾选→SSE流式生成
     if (type === 'procedure') {
         const surveyData = getSurveyData();
         if (!surveyData) {
@@ -4152,6 +4152,91 @@ function generateDocument(type) {
                 if (!currentChatId) { isLoading = false; return; }
             }
             try {
+                // 第一步：查询可用模板
+                bubbleContent.innerHTML = '<p>正在查找可用的程序文件模板...</p>';
+                scrollToBottom();
+                const tmplResp = await fetch('/api/v1/generate/procedure/templates', {
+                    method: 'POST',
+                    headers: apiHeaders(),
+                    body: JSON.stringify({ agent_id: currentAgentId || '' })
+                });
+                const tmplData = await tmplResp.json();
+                if (!tmplData.success || !tmplData.templates || tmplData.templates.length === 0) {
+                    bubbleContent.innerHTML = '<p style="color:#e63946;">未找到任何程序文件模板。请先在全质知识库[体系文件/程序文件]下上传模板，或在填写体系调研时上传程序文件。</p>';
+                    resetStreamingUI();
+                    return;
+                }
+
+                let selectedTemplates = null;
+
+                // 判断是否需要勾选
+                if (tmplData.auto_generate) {
+                    // 用户上传了文件，直接生成
+                    bubbleContent.innerHTML = `<p>已检测到您上传的 ${tmplData.internal_count} 个程序文件模板，正在生成...</p>`;
+                    scrollToBottom();
+                } else {
+                    // 用户没上传，显示勾选表单
+                    bubbleContent.innerHTML = `
+                        <div style="padding:12px;">
+                            <p style="font-weight:600;color:#15589B;margin-bottom:10px;">请选择要生成的程序文件模板：</p>
+                            <p style="font-size:12px;color:#888;margin-bottom:12px;">共找到 ${tmplData.templates.length} 个模板（来自全质知识库），勾选后点击确认生成。</p>
+                            <div id="procedureTemplateList" style="max-height:300px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:8px;padding:8px;">
+                                ${tmplData.templates.map((t, i) => `
+                                    <label style="display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:13px;">
+                                        <input type="checkbox" class="procedure-template-checkbox" value="${t.dept}/${t.filename}" checked style="margin-right:8px;width:16px;height:16px;">
+                                        <span style="flex:1;">
+                                            <strong>${escapeHtml(t.dept)}</strong> / ${escapeHtml(t.filename)}
+                                            <span style="color:#888;font-size:11px;margin-left:4px;">[${t.source_label}]</span>
+                                        </span>
+                                    </label>
+                                `).join('')}
+                            </div>
+                            <div style="margin-top:12px;display:flex;gap:8px;">
+                                <button id="procedureConfirmBtn" style="padding:8px 20px;background:#15589B;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;">✓ 确认生成</button>
+                                <button id="procedureCancelBtn" style="padding:8px 20px;background:#f0f0f0;color:#666;border:none;border-radius:8px;cursor:pointer;">取消</button>
+                                <label style="display:flex;align-items:center;font-size:12px;color:#888;margin-left:8px;cursor:pointer;">
+                                    <input type="checkbox" id="procedureSelectAll" checked style="margin-right:4px;"> 全选/取消全选
+                                </label>
+                            </div>
+                        </div>
+                    `;
+                    scrollToBottom();
+
+                    // 等待用户点击确认或取消
+                    const userChoice = await new Promise((resolve) => {
+                        document.getElementById('procedureConfirmBtn').onclick = () => resolve('confirm');
+                        document.getElementById('procedureCancelBtn').onclick = () => resolve('cancel');
+                        // 全选/取消全选
+                        const selectAll = document.getElementById('procedureSelectAll');
+                        selectAll.onchange = () => {
+                            document.querySelectorAll('.procedure-template-checkbox').forEach(cb => {
+                                cb.checked = selectAll.checked;
+                            });
+                        };
+                    });
+
+                    if (userChoice === 'cancel') {
+                        bubbleContent.innerHTML = '<p style="color:#888;">已取消生成程序文件。</p>';
+                        resetStreamingUI();
+                        return;
+                    }
+
+                    // 收集勾选的模板
+                    selectedTemplates = [];
+                    document.querySelectorAll('.procedure-template-checkbox:checked').forEach(cb => {
+                        selectedTemplates.push(cb.value);
+                    });
+                    if (selectedTemplates.length === 0) {
+                        bubbleContent.innerHTML = '<p style="color:#e63946;">请至少勾选一个模板。</p>';
+                        resetStreamingUI();
+                        return;
+                    }
+
+                    bubbleContent.innerHTML = `<p>已选择 ${selectedTemplates.length} 个模板，正在开始生成...</p>`;
+                    scrollToBottom();
+                }
+
+                // 第二步：SSE 流式生成
                 bubbleContent.innerHTML = `
                     <div class="gen-manual-progress">
                         <div class="gen-progress-header">
@@ -4168,16 +4253,19 @@ function generateDocument(type) {
                 const progressBarEl = bubbleContent.querySelector('.gen-progress-bar');
                 const messageEl = bubbleContent.querySelector('.gen-message');
                 const modsEl = bubbleContent.querySelector('.gen-modifications');
+
+                const requestBody = { survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '' };
+                if (selectedTemplates) requestBody.selected_templates = selectedTemplates;
+
                 const genResp = await fetch('/api/v1/generate/procedure', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken, 'Accept': 'text/event-stream' },
-                    body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '' })
+                    body: JSON.stringify(requestBody)
                 });
                 if (!genResp.ok) { throw new Error('HTTP ' + genResp.status + ': ' + await genResp.text()); }
                 const reader = genResp.body.getReader();
                 const decoder = new TextDecoder('utf-8');
                 let buffer = '';
-                let receivedCount = 0;
                 let modificationLog = [];
                 while (true) {
                     const { value, done } = await reader.read();
@@ -4195,26 +4283,20 @@ function generateDocument(type) {
                             stepTextEl.textContent = data.step || '处理中';
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
                             messageEl.textContent = data.message || '';
-                            if (data.step === '应用修改方案' && !modsEl.querySelector('.gen-mods-header')) {
-                                modsEl.innerHTML = '<div class="gen-mods-header">正在应用的修改：</div><div class="gen-mods-list"></div>';
-                            }
-                        } else if (data.type === 'modifications_start') {
-                            if (!modsEl.querySelector('.gen-mods-header')) {
-                                modsEl.innerHTML = '<div class="gen-mods-header">' + (data.message || '正在应用的修改：') + '</div><div class="gen-mods-list"></div>';
-                            }
                         } else if (data.type === 'modification') {
-                            receivedCount++;
-                            const list = modsEl.querySelector('.gen-mods-list') || modsEl;
+                            const list = modsEl.querySelector('.gen-mods-list') || (() => {
+                                modsEl.innerHTML = '<div class="gen-mods-header">正在应用的修改：</div><div class="gen-mods-list"></div>';
+                                return modsEl.querySelector('.gen-mods-list');
+                            })();
                             const modItem = document.createElement('div');
                             modItem.className = 'gen-mod-item gen-mod-' + (data.mod_type || 'other');
                             const reasonText = data.reason ? ` <span class="gen-mod-reason">${data.reason}</span>` : '';
                             modItem.innerHTML = `<span class="gen-mod-badge">${data.location || ''}</span><span class="gen-mod-preview">${data.preview || ''}</span>${reasonText}`;
                             list.appendChild(modItem);
-                            modificationLog.push({ location: data.location, preview: data.preview, reason: data.reason, mod_type: data.mod_type });
+                            modificationLog.push({ location: data.location, preview: data.preview, reason: data.reason });
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
                             scrollToBottom();
                         } else if (data.type === 'file_complete') {
-                            // 单个部门文件生成完成，追加到列表
                             const list = modsEl.querySelector('.gen-mods-list') || modsEl;
                             const doneItem = document.createElement('div');
                             doneItem.className = 'gen-mod-item';
@@ -4225,7 +4307,6 @@ function generateDocument(type) {
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
                             scrollToBottom();
                         } else if (data.type === 'success') {
-                            // 批量生成完成
                             progressBarEl.style.width = '100%';
                             stepTextEl.textContent = '完成';
                             stepTextEl.previousElementSibling.style.display = 'none';
