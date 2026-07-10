@@ -4094,20 +4094,25 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                         failed_files.append({"dept": dept, "filename": filename_tmpl, "reason": "AI无方案"})
                         continue
 
-                    # 保存文件 — 文件名包含原始模板名，让用户知道具体是哪个程序文件
+                    # 保存文件 — 文件名用程序名称，去掉编号前缀
                     safe_dept = _re.sub(r'[\\/:*?"<>|]', '_', dept)
-                    # 从原始模板文件名提取程序名称（去掉扩展名）
+                    # 从原始模板文件名提取程序名称
                     # 如 "1-AAA-GM-QP-01 质量方针与组织功能以及权责管理程序-A0.doc" → "质量方针与组织功能以及权责管理程序"
+                    # 如 "AAA-GA-QP-03 记录管理程序.doc" → "记录管理程序"
                     tmpl_base = os.path.splitext(filename_tmpl)[0]  # 去扩展名
-                    # 去掉前面的编号前缀（如 "1-AAA-GM-QP-01 "）
-                    tmpl_clean = _re.sub(r'^\d+-[A-Z]+-\w+-\d+\s*', '', tmpl_base)
+                    # 去掉前面的编号前缀：数字开头 + 多段 XXX-XXX-XXX-数字 + 空格
+                    tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
+                    # 也去掉纯 AAA-XX-XX-数字 格式
+                    tmpl_clean = _re.sub(r'^[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_clean)
                     # 去掉末尾的版本号（如 "-A0"、"-A1"）
                     tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
                     # 去掉"二级文件"前缀
                     tmpl_clean = tmpl_clean.replace('二级文件', '')
+                    # 去掉 "(1)" 之类的后缀
+                    tmpl_clean = _re.sub(r'\(\d+\)', '', tmpl_clean)
                     tmpl_clean = tmpl_clean.strip()
                     if not tmpl_clean:
-                        tmpl_clean = filename_tmpl
+                        tmpl_clean = '程序文件'
                     safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
                     out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}.docx"
                     output_path = os.path.join(export_dir, out_filename)
