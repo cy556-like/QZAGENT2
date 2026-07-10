@@ -13114,6 +13114,21 @@ html { scroll-behavior: smooth; }
     box-shadow: 0 6px 20px rgba(21, 88, 155, 0.3);
     transform: translateY(-1px);
 }
+.survey-submit-btn:disabled,
+.survey-submit-btn[disabled] {
+    background: #b8c2cc;
+    color: #eef2f5;
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+    opacity: 0.85;
+}
+.survey-submit-btn:disabled:hover,
+.survey-submit-btn[disabled]:hover {
+    background: #b8c2cc;
+    box-shadow: none;
+    transform: none;
+}
 .survey-draft-btn {
     padding: 14px 32px;
     background: #fff;

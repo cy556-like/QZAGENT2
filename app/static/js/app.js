@@ -3625,6 +3625,8 @@ async function saveSurveyData() {
     renderSurveyUploadedList();
     const statusEl2 = document.getElementById('surveyUploadStatus2');
     if (statusEl2) { statusEl2.style.display = 'none'; statusEl2.innerHTML = ''; }
+    // 进入上传页时按钮默认可点击（用户还没上传文件）
+    updateSurveyFinishBtnState();
     // 更新 history
     history.pushState({page: 'survey_upload'}, '');
     showToast('✓ 体系调研信息已保存', 2000);
@@ -3670,6 +3672,23 @@ async function finishSurveyUpload() {
 // 上传页面已上传文件列表（内存中维护，刷新页面会丢失）
 let surveyUploadedFiles = [];
 
+// 根据 surveyUploadedFiles 状态更新「完成，进入对话」按钮是否可点击
+// 规则：只要有任一文件处于 processing（AI 识别中），按钮禁用变灰；其它情况启用
+function updateSurveyFinishBtnState() {
+    const btn = document.getElementById('surveyFinishBtn');
+    if (!btn) return;
+    const hasProcessing = surveyUploadedFiles.some(f => f.status === 'processing');
+    if (hasProcessing) {
+        btn.disabled = true;
+        // 同步提示文案
+        const procCount = surveyUploadedFiles.filter(f => f.status === 'processing').length;
+        btn.textContent = '⏳ AI 识别中 (' + procCount + ')...';
+    } else {
+        btn.disabled = false;
+        btn.textContent = '✓ 完成，进入对话';
+    }
+}
+
 // 渲染已上传文件列表
 function renderSurveyUploadedList() {
     const listEl = document.getElementById('surveyUploadedList');
@@ -3700,6 +3719,8 @@ function removeSurveyUploadedFile(idx) {
     if (idx < 0 || idx >= surveyUploadedFiles.length) return;
     surveyUploadedFiles.splice(idx, 1);
     renderSurveyUploadedList();
+    // 列表变动后重新评估按钮状态（若被移除的是最后一个 processing 文件，按钮即可恢复可点）
+    updateSurveyFinishBtnState();
 }
 
 // 上传页面文件选择处理（支持多文件，逐个上传+AI提取）
@@ -3721,6 +3742,8 @@ async function onSurveyFileSelected2(event) {
         const fileEntry = { name: file.name, status: 'processing' };
         surveyUploadedFiles.push(fileEntry);
         renderSurveyUploadedList();
+        // 文件开始处理 → 立即禁用「完成」按钮
+        updateSurveyFinishBtnState();
 
         try {
             // 1. 上传文件到临时目录（用于 AI 识别文件类型）
@@ -3786,6 +3809,8 @@ async function onSurveyFileSelected2(event) {
             fileEntry.status = 'error';
         }
         renderSurveyUploadedList();
+        // 单个文件处理完毕 → 立即刷新按钮状态（如还有其它 processing 文件，按钮仍保持禁用）
+        updateSurveyFinishBtnState();
     }
 
     // 显示汇总状态
