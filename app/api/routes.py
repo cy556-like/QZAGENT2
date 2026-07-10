@@ -3770,6 +3770,8 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             today_str = datetime.now().strftime("%Y%m%d")
             filename = f"质量管理手册_{safe_name}_{today_str}.docx"
             output_path = os.path.join(export_dir, filename)
+            # 删除 LibreOffice 转换时自动添加的偶数页页眉页脚（避免空白页）
+            gm.remove_even_page_headers_footers(doc)
             await asyncio.to_thread(doc.save, output_path)
             logger.info(f"[SCskill] 手册已生成: {output_path}")
 
@@ -4116,6 +4118,8 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
                     out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}.docx"
                     output_path = os.path.join(export_dir, out_filename)
+                    # 删除 LibreOffice 转换时自动添加的偶数页页眉页脚（避免空白页）
+                    cx.remove_even_page_headers_footers(doc)
                     await asyncio.to_thread(doc.save, output_path)
                     logger.info(f"[CXskill] 程序文件已生成: {output_path}")
 
