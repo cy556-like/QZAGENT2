@@ -3483,33 +3483,51 @@ async function deleteExtKbDoc(filename) {
 }
 
 async function onExtKbFileSelected(event) {
-    const file = event.target.files[0];
-    if (!file) return;
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
     if (!currentExtKbCategory || !currentExtKbSubcategory || !currentExtKbSubsubcategory) {
         showToast('请先选择分类、子目录、三级子目录', 3000);
         event.target.value = '';
         return;
     }
-    showToast('正在上传: ' + file.name, 2000);
+    const total = files.length;
+    let successCount = 0;
+    let failCount = 0;
+    showToast(`正在上传 ${total} 个文件...`, 2000);
     try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('category', currentExtKbCategory);
-        formData.append('subcategory', currentExtKbSubcategory);
-        formData.append('subsubcategory', currentExtKbSubsubcategory);
-        const resp = await fetch('/api/v1/external-kb/upload', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + authToken },
-            body: formData
-        });
-        const data = await resp.json();
-        if (data.success) {
-            const chunks = data.chunks || 0;
-            showToast('✓ 上传成功: ' + file.name + (chunks ? '（共 ' + chunks + ' 个分块）' : ''), 3000);
-            loadExtKbDocs();
-        } else {
-            showToast('上传失败: ' + (data.detail || data.message || '未知错误'), 3000);
+        for (let i = 0; i < total; i++) {
+            const file = files[i];
+            showToast(`正在上传 (${i + 1}/${total}): ${file.name}`, 2000);
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('category', currentExtKbCategory);
+                formData.append('subcategory', currentExtKbSubcategory);
+                formData.append('subsubcategory', currentExtKbSubsubcategory);
+                const resp = await fetch('/api/v1/external-kb/upload', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + authToken },
+                    body: formData
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    successCount++;
+                } else {
+                    failCount++;
+                    console.warn('[ExtKB上传] 失败:', file.name, data.detail || data.message);
+                }
+            } catch (e) {
+                failCount++;
+                console.warn('[ExtKB上传] 异常:', file.name, e.message);
+            }
         }
+        // 汇总提示
+        if (failCount === 0) {
+            showToast(`✓ 全部上传成功（共 ${successCount} 个文件）`, 3000);
+        } else {
+            showToast(`上传完成：成功 ${successCount} 个，失败 ${failCount} 个`, 4000);
+        }
+        loadExtKbDocs();
     } catch (e) {
         showToast('上传失败: ' + e.message, 3000);
     }
