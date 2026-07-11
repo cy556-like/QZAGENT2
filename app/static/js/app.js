@@ -3426,7 +3426,9 @@ async function loadExtKbDocs() {
             data.documents.forEach(doc => {
                 const name = doc.filename || doc.name || doc;
                 const safeName = (name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                html += '<div class="kb-doc-item"><span class="kb-doc-name">' + escapeHtml(name) + '</span><button class="kb-doc-del-btn" onclick="deleteExtKbDoc(\'' + safeName + '\')">删除</button></div>';
+                // 仅管理员可删除全质知识库文档，普通用户只读+上传
+                const delBtn = (userRole === 'admin') ? '<button class="kb-doc-del-btn" onclick="deleteExtKbDoc(\'' + safeName + '\')">删除</button>' : '';
+                html += '<div class="kb-doc-item"><span class="kb-doc-name">' + escapeHtml(name) + '</span>' + delBtn + '</div>';
             });
             docList.innerHTML = html;
         } else {
@@ -3448,6 +3450,8 @@ async function loadExtKbDocs() {
 }
 
 async function deleteExtKbDoc(filename) {
+    // 双重防御：前端角色校验（后端 require_admin 已做强制校验）
+    if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库文档'); return; }
     if (!confirm('确认删除「' + filename + '」？')) return;
     try {
         const resp = await fetch('/api/v1/external-kb/documents/' + encodeURIComponent(filename), {

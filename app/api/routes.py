@@ -3403,8 +3403,8 @@ async def external_kb_stats(category: str = Query(None), username: str = Depends
 
 
 @router.delete("/external-kb/documents/{filename}", summary="删除全质知识库文档")
-async def delete_external_kb_document(filename: str, username: str = Depends(require_auth)):
-    """删除外部知识库的文档"""
+async def delete_external_kb_document(filename: str, admin: str = Depends(require_admin)):
+    """删除外部知识库的文档（仅管理员可删除，普通用户只读+上传）"""
     try:
         result = await asyncio.to_thread(delete_document, filename, agent_id="__external__")
         return {"success": True, "message": f"已删除 {filename}"}
