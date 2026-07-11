@@ -3844,9 +3844,17 @@ if _CXSCRIPTS_DIR not in _sys_top.path:
 async def list_procedure_templates(request: Request, username: str = Depends(require_auth)):
     """列出所有可用的程序文件模板，供前端勾选。
     如果用户上传了文件（企业内部文件有模板），直接返回这些模板并标记 auto_generate=True。
-    如果用户没上传（企业内部文件为空），返回全质知识库的模板列表供用户勾选。"""
+    如果用户没上传（企业内部文件为空），返回全质知识库的模板列表供用户勾选。
+    
+    AI 智能去重：对每个部门，如果企业内部文件和全质知识库文件是"同一个程序"
+    （即使文件名不同但内容主题相同，如"文件管理规则"="文件控制程序"），
+    则跳过全质知识库的对应文件，避免重复生成。"""
     import importlib
     import sys as _sys
+    import re as _re
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from app.agent.core import create_llm
+
     body = await request.json()
     agent_id = body.get("agent_id", "")
 
@@ -3859,9 +3867,86 @@ async def list_procedure_templates(request: Request, username: str = Depends(req
 
     # 检查企业内部文件是否有模板
     internal_count = sum(1 for t in all_templates if t['source'] == 'internal')
+    external_count = sum(1 for t in all_templates if t['source'] == 'external')
+
+    # ===== AI 智能去重 =====
+    # 对每个部门，找出企业内部文件和全质知识库文件中"内容主题相同"的，跳过全质知识库的对应文件
+    # 仅当企业内部和全质知识库都存在文件时才需要去重；企业内部为空时无需去重
+    templates_to_skip = set()  # 存放需要跳过的 (dept, filename, source=external) 元组
+    if internal_count > 0 and external_count > 0:
+        # 按部门分组
+        from collections import defaultdict
+        dept_internal = defaultdict(list)  # {dept: [filename, ...]}
+        dept_external = defaultdict(list)
+        for t in all_templates:
+            if t['source'] == 'internal':
+                dept_internal[t['dept']].append(t['filename'])
+            else:
+                dept_external[t['dept']].append(t['filename'])
+
+        # 只对"企业内部和全质知识库都有文件"的部门做 AI 去重
+        try:
+            llm = create_llm(short_response=True)
+            for dept in dept_internal:
+                internal_files = dept_internal[dept]
+                external_files = dept_external.get(dept, [])
+                if not external_files:
+                    continue  # 全质知识库没文件，无需去重
+                # 如果企业内部文件数 >= 全质知识库文件数，且文件名相似度高，可能用户已经全量上传，可整体跳过
+                # 但保险起见还是逐个让 AI 判断
+                
+                dedup_prompt = f"""你是企业质量管理文件专家。请判断以下两组文件是否包含"同一个程序文件"（内容主题相同，只是文件名表述不同）。
+
+部门：{dept}
+
+企业内部上传的文件：
+{chr(10).join(f"{i+1}. {f}" for i, f in enumerate(internal_files))}
+
+全质知识库的文件：
+{chr(10).join(f"{i+1}. {f}" for i, f in enumerate(external_files))}
+
+判断规则：
+- "文件控制程序"、"文件管理规则"、"文件管理制度" → 是同一个程序
+- "记录控制程序"、"记录管理程序"、"记录管理规则" → 是同一个程序
+- "内部审核程序"、"内部审核控制程序"、"内审程序" → 是同一个程序
+- 即：核心主题词（文件控制/记录控制/内部审核/管理评审/不合格品控制/纠正措施/预防措施等）相同的，就是同一个程序
+- 即使文件名格式完全不同（如带编号"4-AAA-QA-QP-01 xxx"vs不带编号"xxx"），只要主题相同就算同一个
+
+请严格按以下JSON格式输出，只输出JSON：
+{{"skip_external":[需要跳过的全质知识库文件名列表，即被企业内部文件覆盖的]}}
+不确定的不要放入skip_external（宁可保留生成）。"""
+
+                messages = [
+                    SystemMessage(content="你是企业质量管理文件专家，只输出JSON格式结果。"),
+                    HumanMessage(content=dedup_prompt)
+                ]
+                response = await llm.ainvoke(messages)
+                ai_text = response.content.strip()
+                json_match = _re.search(r'\{[\s\S]*\}', ai_text)
+                if json_match:
+                    try:
+                        import json as _json
+                        result = _json.loads(json_match.group(0))
+                        skip_list = result.get('skip_external', [])
+                        for skip_file in skip_list:
+                            # 确保是字符串且非空
+                            if isinstance(skip_file, str) and skip_file.strip():
+                                templates_to_skip.add((dept, skip_file.strip(), 'external'))
+                                logger.info(f"[程序模板AI去重] 部门={dept}, 跳过全质文件={skip_file.strip()}（被企业内部覆盖）")
+                    except Exception as parse_err:
+                        logger.warning(f"[程序模板AI去重] 解析失败 dept={dept}: {parse_err}, raw={ai_text[:200]}")
+        except Exception as e:
+            logger.warning(f"[程序模板AI去重] 整体失败，跳过去重（保留所有模板）: {e}")
+
+    # 过滤掉被去重的模板
+    filtered_templates = []
+    for t in all_templates:
+        if (t['dept'], t['filename'], t['source']) in templates_to_skip:
+            continue
+        filtered_templates.append(t)
 
     templates_list = []
-    for t in all_templates:
+    for t in filtered_templates:
         source_label = {'internal': '企业内部文件', 'external': '全质知识库'}.get(t['source'], '未知')
         templates_list.append({
             "dept": t['dept'],
