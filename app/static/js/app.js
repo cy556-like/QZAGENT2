@@ -4355,13 +4355,42 @@ function generateDocument(type) {
                             stepTextEl.previousElementSibling.style.display = 'none';
                             const files = data.files || [];
                             const failedFiles = data.failed_files || [];
-                            let downloadHtml = '';
+                            // 按部门分组下载按钮（先输出部门名，再列出该部门下的文件）
+                            const deptGroups = {};
+                            const deptOrder = [];
                             files.forEach(f => {
-                                downloadHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${f.display_name || f.dept}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                                const d = f.dept || '其他';
+                                if (!deptGroups[d]) {
+                                    deptGroups[d] = [];
+                                    deptOrder.push(d);
+                                }
+                                deptGroups[d].push(f);
                             });
+                            let downloadHtml = '';
+                            deptOrder.forEach(dept => {
+                                downloadHtml += `<div style="margin:14px 0 4px;font-weight:bold;color:#15589B;border-left:3px solid #15589B;padding-left:8px;font-size:14px;">${escapeHtml(dept)}</div>`;
+                                deptGroups[dept].forEach(f => {
+                                    downloadHtml += `<div style="margin:6px 0 6px 16px;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename || f.dept)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                                });
+                            });
+                            // 失败文件也按部门分组显示
                             let failedHtml = '';
                             if (failedFiles.length > 0) {
-                                failedHtml = `<p style="color:#e63946;font-size:12px;margin-top:8px;">⚠️ ${failedFiles.length} 个文件生成失败：${failedFiles.map(f => f.dept).join('、')}</p>`;
+                                const failedDeptGroups = {};
+                                const failedDeptOrder = [];
+                                failedFiles.forEach(f => {
+                                    const d = f.dept || '其他';
+                                    if (!failedDeptGroups[d]) {
+                                        failedDeptGroups[d] = [];
+                                        failedDeptOrder.push(d);
+                                    }
+                                    failedDeptGroups[d].push(f);
+                                });
+                                let failedListHtml = '';
+                                failedDeptOrder.forEach(dept => {
+                                    failedListHtml += `<div style="margin:4px 0 2px 8px;color:#e63946;font-size:12px;">${escapeHtml(dept)}：${failedDeptGroups[dept].map(f => escapeHtml(f.filename || f.dept)).join('、')}</div>`;
+                                });
+                                failedHtml = `<div style="margin-top:10px;padding:8px;background:#fef2f2;border-radius:6px;"><p style="color:#e63946;font-size:12px;margin:0 0 4px;">⚠️ ${failedFiles.length} 个文件生成失败：</p>${failedListHtml}</div>`;
                             }
                             bubbleContent.innerHTML = `
                                 <div class="gen-manual-success">
