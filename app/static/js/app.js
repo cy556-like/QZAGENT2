@@ -4230,72 +4230,13 @@ function generateDocument(type) {
 
                 let selectedTemplates = null;
 
-                // 判断是否需要勾选
-                if (tmplData.auto_generate) {
-                    // 用户上传了文件，直接生成
+                // 无论用户是否上传过文件，都直接开始生成（不再弹勾选表单）
+                if (tmplData.internal_count > 0) {
                     bubbleContent.innerHTML = `<p>已检测到您上传的 ${tmplData.internal_count} 个程序文件模板，正在生成...</p>`;
-                    scrollToBottom();
                 } else {
-                    // 用户没上传，显示勾选表单
-                    bubbleContent.innerHTML = `
-                        <div style="padding:12px;">
-                            <p style="font-weight:600;color:#15589B;margin-bottom:10px;">请选择要生成的程序文件模板：</p>
-                            <p style="font-size:12px;color:#888;margin-bottom:12px;">共找到 ${tmplData.templates.length} 个模板（来自全质知识库），勾选后点击确认生成。</p>
-                            <div id="procedureTemplateList" style="max-height:300px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:8px;padding:8px;">
-                                ${tmplData.templates.map((t, i) => `
-                                    <label style="display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:13px;">
-                                        <input type="checkbox" class="procedure-template-checkbox" value="${t.dept}/${t.filename}" checked style="margin-right:8px;width:16px;height:16px;">
-                                        <span style="flex:1;">
-                                            <strong>${escapeHtml(t.dept)}</strong> / ${escapeHtml(t.filename)}
-                                            <span style="color:#888;font-size:11px;margin-left:4px;">[${t.source_label}]</span>
-                                        </span>
-                                    </label>
-                                `).join('')}
-                            </div>
-                            <div style="margin-top:12px;display:flex;gap:8px;">
-                                <button id="procedureConfirmBtn" style="padding:8px 20px;background:#15589B;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;">✓ 确认生成</button>
-                                <button id="procedureCancelBtn" style="padding:8px 20px;background:#f0f0f0;color:#666;border:none;border-radius:8px;cursor:pointer;">取消</button>
-                                <label style="display:flex;align-items:center;font-size:12px;color:#888;margin-left:8px;cursor:pointer;">
-                                    <input type="checkbox" id="procedureSelectAll" checked style="margin-right:4px;"> 全选/取消全选
-                                </label>
-                            </div>
-                        </div>
-                    `;
-                    scrollToBottom();
-
-                    // 等待用户点击确认或取消
-                    const userChoice = await new Promise((resolve) => {
-                        document.getElementById('procedureConfirmBtn').onclick = () => resolve('confirm');
-                        document.getElementById('procedureCancelBtn').onclick = () => resolve('cancel');
-                        // 全选/取消全选
-                        const selectAll = document.getElementById('procedureSelectAll');
-                        selectAll.onchange = () => {
-                            document.querySelectorAll('.procedure-template-checkbox').forEach(cb => {
-                                cb.checked = selectAll.checked;
-                            });
-                        };
-                    });
-
-                    if (userChoice === 'cancel') {
-                        bubbleContent.innerHTML = '<p style="color:#888;">已取消生成程序文件。</p>';
-                        resetStreamingUI();
-                        return;
-                    }
-
-                    // 收集勾选的模板
-                    selectedTemplates = [];
-                    document.querySelectorAll('.procedure-template-checkbox:checked').forEach(cb => {
-                        selectedTemplates.push(cb.value);
-                    });
-                    if (selectedTemplates.length === 0) {
-                        bubbleContent.innerHTML = '<p style="color:#e63946;">请至少勾选一个模板。</p>';
-                        resetStreamingUI();
-                        return;
-                    }
-
-                    bubbleContent.innerHTML = `<p>已选择 ${selectedTemplates.length} 个模板，正在开始生成...</p>`;
-                    scrollToBottom();
+                    bubbleContent.innerHTML = `<p>已找到 ${tmplData.templates.length} 个模板（来自全质知识库），正在生成...</p>`;
                 }
+                scrollToBottom();
 
                 // 第二步：SSE 流式生成
                 bubbleContent.innerHTML = `
