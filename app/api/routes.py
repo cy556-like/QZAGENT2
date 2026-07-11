@@ -1595,6 +1595,9 @@ async def delete_subsubcategory_api(
     subsubcategory = (body.get("subsubcategory") or "").strip()
     if not all([agent_id, category, subcategory, subsubcategory]):
         raise HTTPException(status_code=400, detail="参数不完整")
+    # 全质知识库（external）仅管理员可删除，普通用户只读+上传
+    if agent_id == "__external__" and not is_admin(username):
+        raise HTTPException(status_code=403, detail="权限不足，全质知识库仅管理员可删除")
     result = await asyncio.to_thread(delete_subsubcategory, agent_id, category, subcategory, subsubcategory)
     if result.get("status") != "success":
         raise HTTPException(status_code=400, detail=result.get("message", "删除失败"))
@@ -1683,6 +1686,9 @@ async def delete_subcategory_api(
     subcategory = (body.get("subcategory") or "").strip()
     if not all([agent_id, category, subcategory]):
         raise HTTPException(status_code=400, detail="参数不完整")
+    # 全质知识库（external）仅管理员可删除，普通用户只读+上传
+    if agent_id == "__external__" and not is_admin(username):
+        raise HTTPException(status_code=403, detail="权限不足，全质知识库仅管理员可删除")
     result = await asyncio.to_thread(delete_subcategory, agent_id, category, subcategory)
     if result.get("status") != "success":
         raise HTTPException(status_code=400, detail=result.get("message", "删除失败"))
@@ -1766,6 +1772,9 @@ async def delete_category_api(
     category = (body.get("category") or "").strip()
     if not all([agent_id, category]):
         raise HTTPException(status_code=400, detail="参数不完整")
+    # 全质知识库（external）仅管理员可删除，普通用户只读+上传
+    if agent_id == "__external__" and not is_admin(username):
+        raise HTTPException(status_code=403, detail="权限不足，全质知识库仅管理员可删除")
 
     # 1. 删除磁盘文件夹
     cat_dir = os.path.join(_get_agent_dir(agent_id), category)

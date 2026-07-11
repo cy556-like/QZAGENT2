@@ -2983,6 +2983,8 @@ async function loadExtKbCategories() {
             const safeCat = escapeHtml(cat);
             const jsCat = cat.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             // 分组标题（可折叠）+ + 新建子目录 + ✎ 重命名 + × 删除
+            // 普通用户不显示删除按钮（仅管理员可删除全质知识库目录）
+            const extCatDelBtn = (userRole === 'admin') ? '<span class="kb-cat-del" onclick="delExtKbCategory(\'' + jsCat + '\', event)" title="删除">×</span>' : '';
             html += '<div class="kb-cat-group" data-cat="' + safeCat + '">' +
                 '<div class="kb-cat-group-title" onclick="toggleExtCatGroup(this)">' +
                     '<span class="cat-arrow">▾</span>' +
@@ -2990,7 +2992,7 @@ async function loadExtKbCategories() {
                     '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
                         '<span class="kb-cat-add-sub" onclick="addExtKbSubcategoryPrompt(\'' + jsCat + '\', event)" title="新建子目录">+</span>' +
                         '<span class="kb-cat-edit" onclick="renameExtKbCategory(\'' + jsCat + '\', event)" title="重命名">✎</span>' +
-                        '<span class="kb-cat-del" onclick="delExtKbCategory(\'' + jsCat + '\', event)" title="删除">×</span>' +
+                        extCatDelBtn +
                     '</span>' +
                 '</div>' +
                 '<div class="kb-cat-sub-list" id="extKbSubList_' + jsCat.replace(/[^\w\u4e00-\u9fa5]/g, '_') + '">' +
@@ -3027,11 +3029,13 @@ async function loadExtKbSubcategoriesForGroup(cat) {
             const safeSub = escapeHtml(sub);
             const jsSub = sub.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             const jsCat = cat.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            // 普通用户不显示删除按钮（仅管理员可删除全质知识库目录）
+            const extSubcatDelBtn = (userRole === 'admin') ? '<span class="kb-cat-del" onclick="delExtKbSubcategory(\'' + jsCat + '\', \'' + jsSub + '\', event)" title="删除">×</span>' : '';
             html += '<button class="kb-cat-item" onclick="selectExtKbSubcategory(\'' + jsCat + '\', \'' + jsSub + '\', this)">' +
                 '<span class="kb-cat-name">' + safeSub + '</span>' +
                 '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
                     '<span class="kb-cat-edit" onclick="renameExtKbSubcategory(\'' + jsCat + '\', \'' + jsSub + '\', event)" title="重命名">✎</span>' +
-                    '<span class="kb-cat-del" onclick="delExtKbSubcategory(\'' + jsCat + '\', \'' + jsSub + '\', event)" title="删除">×</span>' +
+                    extSubcatDelBtn +
                 '</span>' +
             '</button>';
         });
@@ -3110,11 +3114,13 @@ async function loadExtKbSubsubcategories() {
             const jsSubsub = subsub.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             const jsCat = currentExtKbCategory.replace(/'/g, "\\'").replace(/"/g, '&quot;');
             const jsSub = currentExtKbSubcategory.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            // 普通用户不显示删除按钮（仅管理员可删除全质知识库目录）
+            const extSubsubDelBtn = (userRole === 'admin') ? '<span class="kb-cat-del" onclick="delExtKbSubsubcategory(\'' + jsCat + '\', \'' + jsSub + '\', \'' + jsSubsub + '\', event)" title="删除">×</span>' : '';
             html += '<button class="kb-cat-item" onclick="selectExtKbSubsubcategory(\'' + jsCat + '\', \'' + jsSub + '\', \'' + jsSubsub + '\', this)">' +
                 '<span class="kb-cat-name">' + safeSubsub + '</span>' +
                 '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
                     '<span class="kb-cat-edit" onclick="renameExtKbSubsubcategory(\'' + jsCat + '\', \'' + jsSub + '\', \'' + jsSubsub + '\', event)" title="重命名">✎</span>' +
-                    '<span class="kb-cat-del" onclick="delExtKbSubsubcategory(\'' + jsCat + '\', \'' + jsSub + '\', \'' + jsSubsub + '\', event)" title="删除">×</span>' +
+                    extSubsubDelBtn +
                 '</span>' +
             '</button>';
         });
@@ -3174,6 +3180,8 @@ async function addExtKbSubsubcategory() {
 // 删除三级子目录
 async function delExtKbSubsubcategory(cat, sub, subsub, event) {
     event.stopPropagation();
+    // 双重防御：前端角色校验（后端已做强制校验）
+    if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库目录'); return; }
     if (!confirm('确认删除子目录「' + cat + ' / ' + sub + ' / ' + subsub + '」？该子目录下所有文件都会被删除！')) return;
     try {
         const resp = await fetch('/api/v1/kb/subsubcategories', {
@@ -3264,6 +3272,8 @@ async function addExtKbCategory() {
 // 删除一级分类（分组）
 async function delExtKbCategory(name, event) {
     event.stopPropagation();
+    // 双重防御：前端角色校验（后端已做强制校验）
+    if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库目录'); return; }
     if (!confirm('确认删除分组「' + name + '」？该分组下所有子目录和文件都会被删除！')) return;
     try {
         const resp = await fetch('/api/v1/kb/categories', {
@@ -3350,6 +3360,8 @@ async function addExtKbSubcategoryPrompt(cat, event) {
 // 删除子目录
 async function delExtKbSubcategory(cat, sub, event) {
     event.stopPropagation();
+    // 双重防御：前端角色校验（后端已做强制校验）
+    if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库目录'); return; }
     if (!confirm('确认删除子目录「' + cat + ' / ' + sub + '」？该子目录下所有文件都会被删除！')) return;
     try {
         const resp = await fetch('/api/v1/kb/subcategories', {
