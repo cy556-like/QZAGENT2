@@ -93,12 +93,13 @@ class FileBasedHistory(BaseChatMessageHistory):
         self._dirty = False
 
     def _schedule_save(self):
-        """防抖写入：2秒内的多次 add_message 只触发一次磁盘写入"""
+        """防抖写入：0.5秒内的多次 add_message 只触发一次磁盘写入
+        【调整】从 2 秒缩短到 0.5 秒，减少后端中断时丢失数据的风险"""
         self._dirty = True
         if self._save_timer is not None:
             self._save_timer.cancel()
         import threading
-        self._save_timer = threading.Timer(2.0, self._flush_save)
+        self._save_timer = threading.Timer(0.5, self._flush_save)
         self._save_timer.daemon = True
         self._save_timer.start()
 
@@ -231,6 +232,22 @@ def flush_session(session_id: str) -> None:
                 logger.debug(f"会话 {session_id} 已flush到磁盘")
             except Exception as e:
                 logger.warning(f"会话 {session_id} flush失败: {e}")
+
+
+def flush_all_sessions() -> int:
+    """强制将所有会话的待写入数据刷到磁盘（服务关闭时调用，防止数据丢失）
+    返回 flush 的会话数"""
+    count = 0
+    for session_id in list(_session_store.keys()):
+        history, _ = _session_store[session_id]
+        if hasattr(history, 'flush'):
+            try:
+                history.flush()
+                count += 1
+            except Exception as e:
+                logger.warning(f"会话 {session_id} flush失败: {e}")
+    logger.info(f"已将 {count} 个会话的数据 flush 到磁盘")
+    return count
 
 
 def get_history_messages(session_id: str) -> list[dict]:

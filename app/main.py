@@ -262,6 +262,15 @@ def create_app() -> FastAPI:
         _shutdown_requested = True
         logger = logging.getLogger("app")
         logger.info(f"收到关闭信号，等待 {_active_connections} 个活跃连接完成...")
+        # 【关键】关闭前 flush 所有会话的待写入数据到磁盘，防止聊天记录丢失
+        # 防抖写入的 2 秒定时器是 daemon 线程，进程退出时会被强杀
+        # 不主动 flush 会导致最后 2 秒内的消息丢失
+        try:
+            from app.memory.manager import flush_all_sessions
+            flushed = flush_all_sessions()
+            logger.info(f"服务关闭前已 flush {flushed} 个会话到磁盘")
+        except Exception as e:
+            logger.warning(f"flush 会话失败: {e}")
 
     # ===== 后台定期清理任务：防止内存泄漏 =====
     @app.on_event("startup")
@@ -540,9 +549,27 @@ if __name__ == "__main__":
         global _shutdown_requested
         _shutdown_requested = True
         logger.info(f"收到信号 {signum}，开始优雅关闭...")
+        # 【关键】信号触发时立即 flush 所有会话，防止 taskkill 丢失数据
+        try:
+            from app.memory.manager import flush_all_sessions
+            flushed = flush_all_sessions()
+            logger.info(f"信号处理中已 flush {flushed} 个会话到磁盘")
+        except Exception as e:
+            logger.warning(f"信号处理 flush 失败: {e}")
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
+    
+    # 【关键】注册 atexit 钩子，确保进程退出时数据落盘
+    # 覆盖 taskkill（非 /F）、Ctrl+C、Python 正常退出等场景
+    import atexit
+    def _atexit_flush():
+        try:
+            from app.memory.manager import flush_all_sessions
+            flush_all_sessions()
+        except Exception:
+            pass
+    atexit.register(_atexit_flush)
 
     uvicorn.run(
         app,
