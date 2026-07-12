@@ -866,6 +866,8 @@ async def chat_with_file_stream(
 
     store_to_kb: str = Form("true"),
 
+    category: str = Form(""),  # [Bug 1 修复] 补全缺失的 category 参数
+
     username: str = Depends(get_current_user),
 
 ):
@@ -1958,15 +1960,24 @@ async def modify_document_api(filename: str, req: ModifyDocumentRequest):
 
 @router.get("/documents/{filename}/download", summary="下载知识库文档")
 
-async def download_document(filename: str, agent_id: str = Query(None, description="智能体ID，为空时查全局知识库")):
+async def download_document(filename: str, agent_id: str = Query(None, description="智能体ID，为空时查全局知识库"), auth_username: str = Depends(require_auth)):
 
     """
 
     下载知识库中的文档文件
 
     支持 .docx / .txt / .pdf 格式
-
+    [Bug 3 修复] 加 JWT 认证 + agent_id 白名单 + 路径穿越校验
     """
+
+    # [Bug 3 修复] agent_id 白名单校验，防止路径穿越
+    if agent_id:
+        if not re.match(r'^[A-Za-z0-9_-]+$', agent_id or ''):
+            raise HTTPException(status_code=400, detail="非法的 agent_id")
+    
+    # [Bug 3 修复] filename 白名单校验，防止路径穿越
+    if not re.match(r'^[A-Za-z0-9_\u4e00-\u9fa5.\-() ]+$', filename or '') or '..' in filename or '/' in filename or '\\' in filename:
+        raise HTTPException(status_code=400, detail="非法的文件名")
 
     # 先查找agent子目录，再查全局目录
 
@@ -1977,6 +1988,12 @@ async def download_document(filename: str, agent_id: str = Query(None, descripti
     else:
 
         file_path = os.path.join(settings.DOCUMENTS_DIR, filename)
+
+    # [Bug 3 修复] 校验最终路径仍在 DOCUMENTS_DIR 下（防止符号链接等绕过）
+    real_path = os.path.realpath(file_path)
+    real_docs_dir = os.path.realpath(settings.DOCUMENTS_DIR)
+    if not real_path.startswith(real_docs_dir + os.sep) and real_path != real_docs_dir:
+        raise HTTPException(status_code=400, detail="非法的文件路径")
 
     if not os.path.exists(file_path):
 
@@ -2460,9 +2477,14 @@ async def delete_document_api(filename: str, agent_id: str = Query(None, descrip
 
 @router.get("/history/{session_id}", summary="获取对话历史")
 
-async def get_history(session_id: str):
+async def get_history(session_id: str, auth_username: str = Depends(require_auth)):
 
-    """获取指定会话的对话历史"""
+    """获取指定会话的对话历史
+    [Bug 2 修复] 加 JWT 认证"""
+
+    # 校验会话归属：session_id 应以用户名开头
+    if not session_id.startswith(auth_username + "_"):
+        raise HTTPException(status_code=403, detail="无权访问该会话")
 
     messages = get_history_messages(session_id)
 
@@ -2474,9 +2496,14 @@ async def get_history(session_id: str):
 
 @router.delete("/history/{session_id}", summary="清除对话历史")
 
-async def delete_history(session_id: str):
+async def delete_history(session_id: str, auth_username: str = Depends(require_auth)):
 
-    """清除指定会话的对话历史，同时清理临时文件和导出文件"""
+    """清除指定会话的对话历史，同时清理临时文件和导出文件
+    [Bug 2 修复] 加 JWT 认证 + 会话归属校验"""
+
+    # 校验会话归属
+    if not session_id.startswith(auth_username + "_"):
+        raise HTTPException(status_code=403, detail="无权操作该会话")
 
     clear_session_history(session_id)
 
@@ -2524,7 +2551,9 @@ async def delete_history(session_id: str):
 
 async def get_chats(
 
-    username: str,
+    auth_username: str = Depends(require_auth),
+
+    username: str = Query(None, description="（已废弃，统一用JWT认证）历史兼容参数"),
 
     mode: str = Query(None, description="模式过滤: agent/chat"),
 
@@ -2534,7 +2563,10 @@ async def get_chats(
 
 ):
 
-    """获取用户的会话列表（支持分页，支持按模式过滤）"""
+    """获取用户的会话列表（支持分页，支持按模式过滤）
+    [Bug 2 修复] 从 JWT 拿 username，不再信任 query 参数"""
+
+    username = auth_username  # 以 JWT 认证的用户名为准
 
     chats = list_chats(username, mode=mode, skip_auto_title=True)  # GET请求跳过自动标题更新，避免写副作用
 
@@ -2568,7 +2600,7 @@ async def get_chats(
 
 async def create_chat_api(
 
-    username: str,
+    auth_username: str = Depends(require_auth),
 
     title: str = "新对话",
 
@@ -2576,9 +2608,14 @@ async def create_chat_api(
 
     agent_id: str = Query(None, description="智能体ID，会话归属到指定智能体"),
 
+    username: str = Query(None, description="（已废弃）历史兼容参数"),
+
 ):
 
-    """为用户创建一个新的会话（支持指定模式和智能体归属）"""
+    """为用户创建一个新的会话（支持指定模式和智能体归属）
+    [Bug 2 修复] 从 JWT 拿 username"""
+
+    username = auth_username
 
     chat_info = create_chat(username, title, mode=mode, agent_id=agent_id)
 
@@ -2592,9 +2629,12 @@ async def create_chat_api(
 
 @router.delete("/chats/{chat_id}", summary="删除会话")
 
-async def delete_chat_api(chat_id: str, username: str):
+async def delete_chat_api(chat_id: str, auth_username: str = Depends(require_auth)):
 
-    """删除用户的某个会话，同时清理普通模式下的临时文件和导出文件"""
+    """删除用户的某个会话，同时清理普通模式下的临时文件和导出文件
+    [Bug 2 修复] 从 JWT 拿 username"""
+
+    username = auth_username
 
     delete_chat(username, chat_id)
 
@@ -2636,11 +2676,18 @@ async def delete_chat_api(chat_id: str, username: str):
 
 @router.put("/chats/{chat_id}/rename", summary="重命名会话")
 
-async def rename_chat_api(chat_id: str, req: RenameRequest):
+async def rename_chat_api(chat_id: str, req: RenameRequest, auth_username: str = Depends(require_auth)):
 
-    """重命名用户的某个会话"""
+    """重命名用户的某个会话
+    [Bug 2 修复] 从 JWT 拿 username，校验会话归属"""
 
-    rename_chat(req.username, req.chat_id, req.new_title)
+    username = auth_username  # 以 JWT 为准，忽略 req.body 里的 username
+
+    # 校验会话归属
+    if not chat_id.startswith(username + "_"):
+        raise HTTPException(status_code=403, detail="无权操作该会话")
+
+    rename_chat(username, req.chat_id, req.new_title)
 
     return {"success": True, "message": "会话已重命名"}
 
@@ -2920,11 +2967,12 @@ async def update_config(req: ConfigUpdateRequest, username: str = Depends(requir
 
 @router.get("/export/{session_id}", summary="导出对话")
 
-async def export_chat(session_id: str, format: str = "md", agent_name: str = ""):
+async def export_chat(session_id: str, format: str = "md", agent_name: str = "", auth_username: str = Depends(require_auth)):
 
     """
 
     导出对话为 Word(docx)、PDF 或 Markdown 格式
+    [Bug 2 修复] 加 JWT 认证 + 会话归属校验
 
     format: docx | pdf | md
     agent_name: 当前智能体名称（用于文件名和标题）
@@ -2934,6 +2982,10 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
       原生元素（Word/PDF 表格、标题、列表、代码块等），避免出现 |---|---|
       这样的纯文本残留。
     """
+
+    # 校验会话归属
+    if not session_id.startswith(auth_username + "_"):
+        raise HTTPException(status_code=403, detail="无权导出该会话")
 
     # [BUG FIX] 使用 get_history_messages_from_file 强制从文件读取最新数据
     # 避免多worker进程下内存缓存不一致导致导出内容错误
@@ -4341,7 +4393,8 @@ async def survey_upload(file: UploadFile = File(...), username: str = Depends(re
 @router.post("/survey/extract", summary="AI提取文档中的企业信息+识别文件类型")
 async def survey_extract(request: Request, username: str = Depends(require_auth)):
     """调用当前选择的LLM模型，从上传的文档中提取企业信息，自动填充到体系调研表单
-    同时识别文件类型（手册/程序文件/三层次文件/记录表格/其他），用于自动归类到知识库"""
+    同时识别文件类型（手册/程序文件/三层次文件/记录表格/其他），用于自动归类到知识库
+    [Bug 4 修复] file_path 白名单校验，防止任意文件读取"""
     import json as _json
     import re
     body = await request.json()
@@ -4349,6 +4402,18 @@ async def survey_extract(request: Request, username: str = Depends(require_auth)
     filename = body.get("filename", "")
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=400, detail="文件不存在，请重新上传")
+    
+    # [Bug 4 修复] 白名单校验：file_path 必须在 data/temp/survey/ 目录下
+    survey_temp_dir = os.path.realpath(os.path.join(settings.DATA_DIR, "temp", "survey"))
+    real_file_path = os.path.realpath(file_path)
+    if not real_file_path.startswith(survey_temp_dir + os.sep) and real_file_path != survey_temp_dir:
+        logger.warning(f"[调研提取] 非法 file_path: {file_path} (用户={username})")
+        raise HTTPException(status_code=403, detail="非法的文件路径，仅允许读取调研上传的临时文件")
+    
+    # [Bug 4 修复] filename 白名单校验
+    if filename and not re.match(r'^[A-Za-z0-9_\u4e00-\u9fa5.\-() ]+$', filename):
+        raise HTTPException(status_code=400, detail="非法的文件名")
+    
     try:
         from app.rag.document import load_document
         docs = await asyncio.to_thread(load_document, file_path)
@@ -4439,9 +4504,10 @@ async def delete_agent_knowledge(agent_id: str, admin: str = Depends(require_adm
 
 @router.get("/debug/collections", summary="列出所有 ChromaDB collection")
 
-async def debug_collections():
+async def debug_collections(admin: str = Depends(require_admin)):
 
-    """诊断接口：列出所有 ChromaDB collection 及其文档数"""
+    """诊断接口：列出所有 ChromaDB collection 及其文档数
+    [Bug 5 修复] 仅管理员可访问"""
 
     collections = list_all_collections()
 
@@ -4453,11 +4519,12 @@ async def debug_collections():
 
 @router.post("/reindex", summary="重建知识库索引（切换embedding模型后使用）")
 
-async def reindex_knowledge(agent_id: str = Query(None, description="智能体ID，为空时重建全局知识库")):
+async def reindex_knowledge(agent_id: str = Query(None, description="智能体ID，为空时重建全局知识库"), admin: str = Depends(require_admin)):
 
     """
 
     重建指定知识库的所有文档索引。
+    [Bug 5 修复] 仅管理员可触发
 
     
 
@@ -4491,11 +4558,12 @@ async def reindex_knowledge(agent_id: str = Query(None, description="智能体ID
 
 @router.get("/migrate/cleanup-collections", summary="清理异常的 ChromaDB collection")
 
-async def cleanup_collections():
+async def cleanup_collections(admin: str = Depends(require_admin)):
 
     """
 
     清理空 collection 或有双重前缀的 collection
+    [Bug 5 修复] 仅管理员可触发
 
     例如：agent_agent_xxx → 应该是 agent_xxx
 
