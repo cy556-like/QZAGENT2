@@ -1641,7 +1641,23 @@ async def create_subcategory_api(
         logger.exception(f"[KB] 新建子目录失败: {sub_dir}, err={e}")
         raise HTTPException(status_code=500, detail=f"创建目录失败: {e}")
     logger.info(f"[KB] 新建子目录: agent={agent_id}, cat={category}, sub={subcategory}, user={username}, path={sub_dir}")
-    return {"success": True, "subcategory": subcategory}
+
+    # [需求实现] 程序文件的部门子目录同步到三层次文件和记录表格
+    # 在程序文件里新建部门时，自动在三层次文件和记录表格里也新建同名部门
+    SYNC_CATEGORIES = ["三层次文件", "记录表格"]
+    synced = []
+    if category == "程序文件" and agent_id != "__external__":
+        for sync_cat in SYNC_CATEGORIES:
+            try:
+                sync_dir = os.path.join(_get_agent_dir(agent_id), sync_cat, subcategory)
+                os.makedirs(sync_dir, exist_ok=True)
+                synced.append(sync_cat)
+            except Exception as sync_e:
+                logger.warning(f"[KB] 同步新建子目录失败: {sync_cat}/{subcategory}, err={sync_e}")
+        if synced:
+            logger.info(f"[KB] 部门「{subcategory}」已同步到: {', '.join(synced)}")
+
+    return {"success": True, "subcategory": subcategory, "synced_to": synced if synced else None}
 
 
 @router.put("/kb/subcategories", summary="重命名二级子目录")
@@ -1667,7 +1683,23 @@ async def rename_subcategory_api(
     if result.get("status") != "success":
         raise HTTPException(status_code=400, detail=result.get("message", "重命名失败"))
     logger.info(f"[KB] 重命名子目录: {old_sub} -> {new_sub}, user={username}")
-    return {"success": True, "message": result.get("message")}
+
+    # [需求实现] 程序文件的部门重命名同步到三层次文件和记录表格
+    SYNC_CATEGORIES = ["三层次文件", "记录表格"]
+    synced = []
+    if category == "程序文件" and agent_id != "__external__":
+        for sync_cat in SYNC_CATEGORIES:
+            try:
+                sync_result = await asyncio.to_thread(rename_subcategory, agent_id, sync_cat, old_sub, new_sub)
+                if sync_result.get("status") == "success":
+                    synced.append(sync_cat)
+            except Exception as sync_e:
+                # 三层次文件/记录表格里可能没有这个部门，忽略错误
+                logger.debug(f"[KB] 同步重命名子目录跳过: {sync_cat}/{old_sub}, err={sync_e}")
+        if synced:
+            logger.info(f"[KB] 部门「{old_sub}→{new_sub}」已同步到: {', '.join(synced)}")
+
+    return {"success": True, "message": result.get("message"), "synced_to": synced if synced else None}
 
 
 @router.delete("/kb/subcategories", summary="删除二级子目录及其下所有文件")
@@ -1695,7 +1727,23 @@ async def delete_subcategory_api(
     if result.get("status") != "success":
         raise HTTPException(status_code=400, detail=result.get("message", "删除失败"))
     logger.info(f"[KB] 删除子目录: {category}/{subcategory}, user={username}")
-    return {"success": True, "message": result.get("message")}
+
+    # [需求实现] 程序文件的部门删除同步到三层次文件和记录表格
+    SYNC_CATEGORIES = ["三层次文件", "记录表格"]
+    synced = []
+    if category == "程序文件" and agent_id != "__external__":
+        for sync_cat in SYNC_CATEGORIES:
+            try:
+                sync_result = await asyncio.to_thread(delete_subcategory, agent_id, sync_cat, subcategory)
+                if sync_result.get("status") == "success":
+                    synced.append(sync_cat)
+            except Exception as sync_e:
+                # 三层次文件/记录表格里可能没有这个部门，忽略错误
+                logger.debug(f"[KB] 同步删除子目录跳过: {sync_cat}/{subcategory}, err={sync_e}")
+        if synced:
+            logger.info(f"[KB] 部门「{subcategory}」已从以下分类同步删除: {', '.join(synced)}")
+
+    return {"success": True, "message": result.get("message"), "synced_to": synced if synced else None}
 
 
 @router.put("/kb/categories", summary="重命名一级分类")
