@@ -3858,12 +3858,12 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 template_source_text = f"基于【内置模板】生成\n模板文件：{template_filename}"
             # [Bug 修复] 把对话记录保存到会话历史，否则重启后前端看不到
             # 同时把文件下载信息嵌入消息，前端加载历史时能重新渲染下载按钮
+            # 注意：用户点按钮不是发消息，不保存 HumanMessage，只保存 AI 回复
             try:
                 from app.memory.manager import get_session_history, flush_session
                 from langchain_core.messages import AIMessage as _AIMsg2
                 history = get_session_history(session_id_for_export)
-                user_msg = f"一键生成质量手册（公司：{survey_data.get('sv_company_name','未填写')}）"
-                history.add_message(HumanMessage(content=user_msg))
+                # AI 消息：记录生成的手册信息 + 修改详情
                 ai_msg = f"已生成质量手册：{filename}（{modifications_count} 处修改）\n{template_source_text}"
                 # 嵌入下载信息（前端检测此标记重新渲染下载按钮）
                 download_info = {
@@ -4328,13 +4328,11 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             # 最终汇总
             # [Bug 修复] 把对话记录保存到会话历史，否则重启后前端看不到
             # 同时把文件下载信息嵌入消息，前端加载历史时能重新渲染下载按钮
+            # 注意：用户点按钮不是发消息，不保存 HumanMessage，只保存 AI 回复
             try:
                 from app.memory.manager import get_session_history, flush_session
                 from langchain_core.messages import AIMessage as _AIMsg
                 history = get_session_history(session_id_for_export)
-                # 用户消息：记录用户做了一键生成程序文件的操作
-                user_msg = f"一键生成程序文件（公司：{survey_data.get('sv_company_name','未填写')}，共 {len(generated_files)} 个文件成功，{len(failed_files)} 个失败）"
-                history.add_message(HumanMessage(content=user_msg))
                 # AI 消息：记录生成的文件列表 + 嵌入下载信息JSON标记
                 if generated_files:
                     file_list = "\n".join([f"- {f.get('display_name', f.get('dept',''))}（{f.get('modifications_count',0)} 处修改）" for f in generated_files])
