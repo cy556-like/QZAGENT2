@@ -4526,7 +4526,6 @@ function generateDocument(type) {
         }
         document.getElementById('chatContent').classList.remove('centered');
         // [Bug #9 修复] 先检查 isLoading，避免双击产生孤儿空气泡
-        const payMsg = '本版本为试用，如需使用：\n请汇款至：\n账户名称：北京全质科技股份有限公司\n账户号码：11050163810000000267\n开户银行：中国建设银行股份有限公司北京北洼路支行\n（提供6%的增值税专用发票）\n或联系售前服务电话（微信同号）：18601256219';
         (async () => {
             if (isLoading) return;
             isLoading = true;
@@ -4535,12 +4534,40 @@ function generateDocument(type) {
                 await createNewChat();
                 if (!currentChatId) { isLoading = false; return; }
             }
+            // 直接渲染付费信息卡片，不走 AI（避免等待+浪费 token）
+            const bubbleContent = bubble.querySelector('.bubble') || bubble;
+            bubbleContent.innerHTML = `
+                <div style="padding:8px 4px; font-size:14px; line-height:1.9; color:#333;">
+                    <div style="font-size:16px; font-weight:700; color:#15589B; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #e0e0e0;">本功能为付费功能，如需使用请联系：</div>
+                    <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
+                        <tr>
+                            <td style="padding:6px 0; color:#666; width:90px; vertical-align:top;">账户名称</td>
+                            <td style="padding:6px 0; font-weight:600;">北京全质科技股份有限公司</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 0; color:#666; vertical-align:top;">账户号码</td>
+                            <td style="padding:6px 0; font-weight:600; font-family:monospace; letter-spacing:0.5px;">11050163810000000267</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 0; color:#666; vertical-align:top;">开户银行</td>
+                            <td style="padding:6px 0; font-weight:600;">中国建设银行股份有限公司北京北洼路支行</td>
+                        </tr>
+                    </table>
+                    <div style="padding:10px 14px; background:#f0f7ff; border-radius:8px; border-left:3px solid #15589B; margin-bottom:14px; font-size:13px; color:#15589B;">
+                        汇款后请保留凭证，可提供 6% 增值税专用发票。
+                    </div>
+                    <div style="padding:10px 14px; background:#fff8e1; border-radius:8px; border-left:3px solid #f9a825; font-size:13px; color:#7a5c00;">
+                        售前服务电话（微信同号）：<strong style="font-size:15px; letter-spacing:0.5px;">18601256219</strong>
+                    </div>
+                </div>
+            `;
+            // 保存到会话历史
             try {
-                await streamChat('/api/v1/chat/stream', {
+                const resp = await fetch('/api/v1/chat/stream', {
                     method: 'POST',
                     headers: apiHeaders(),
                     body: JSON.stringify({
-                        message: '请回复以下内容，原样输出：' + payMsg,
+                        message: '用户点击了付费功能按钮',
                         session_id: currentChatId,
                         web_search: false,
                         mode: currentMode,
@@ -4549,14 +4576,12 @@ function generateDocument(type) {
                         agent_id: currentAgentId || '',
                         agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : ''
                     })
-                }, bubble);
-                await loadChatList();
-                scrollToBottom();
-            } catch (e) {
-                console.error('[付费提示] 失败:', e);
-            } finally {
-                resetStreamingUI();
-            }
+                });
+                // 不需要处理响应，只是为了保存对话记录
+            } catch(e) { console.warn('保存付费提示对话记录失败:', e); }
+            isLoading = false;
+            await loadChatList();
+            scrollToBottom();
         })();
         return;
     }
