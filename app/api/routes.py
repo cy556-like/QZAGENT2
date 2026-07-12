@@ -4642,8 +4642,11 @@ async def cleanup_collections(admin: str = Depends(require_admin)):
                     from app.rag.document import get_vector_store
 
                     # 从 agent_agent_xxx 提取真正的 agent_id
-
-                    real_agent_id = name.replace("agent_", "", 1)  # 去掉第一个 agent_ 前缀
+                    # [Bug 6 修复] 不能用 name.replace("agent_", "", 1)，那样得到 "agent_xxx"
+                    # 再传给 get_vector_store 会拼成 "agent_agent_xxx"（又回到原名）
+                    # 导致 add_documents 写入的就是即将被 delete 的旧 collection，数据全丢
+                    # 正确做法：直接去掉双重前缀 "agent_agent_"，得到真正的 agent_id
+                    real_agent_id = name[len("agent_agent_"):]  # 去掉 "agent_agent_" 前缀
 
                     new_vs = get_vector_store(agent_id=real_agent_id)
 
