@@ -4536,6 +4536,13 @@ function generateDocument(type) {
             }
             // 直接渲染付费信息，不走 AI（避免等待+浪费 token）
             const bubbleContent = bubble.querySelector('.bubble') || bubble;
+            const payMsg = `本版本为试用，如需使用：
+请汇款至：
+账户名称：北京全质科技股份有限公司
+账户号码：11050163810000000267
+开户银行：中国建设银行股份有限公司北京北洼路支行
+（提供6%的增值税专用发票）
+或联系售前服务电话（微信同号）：18601256219`;
             bubbleContent.innerHTML = `
                 <div style="padding:8px 4px; font-size:14px; line-height:2; color:#333;">
                     <div style="font-size:15px; font-weight:700; color:#15589B; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #e0e0e0;">本版本为试用，如需使用：</div>
@@ -4549,23 +4556,13 @@ function generateDocument(type) {
                     <div style="padding-top:4px;">或联系售前服务电话（微信同号）：<strong style="font-size:15px;">18601256219</strong></div>
                 </div>
             `;
-            // 保存到会话历史
+            // 保存到会话历史（只保存AI消息，不保存用户消息，不走AI）
             try {
-                const resp = await fetch('/api/v1/chat/stream', {
+                const resp = await fetch('/api/v1/history/' + currentChatId, {
                     method: 'POST',
                     headers: apiHeaders(),
-                    body: JSON.stringify({
-                        message: '用户点击了付费功能按钮',
-                        session_id: currentChatId,
-                        web_search: false,
-                        mode: currentMode,
-                        deep_think: false,
-                        skill: '',
-                        agent_id: currentAgentId || '',
-                        agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : ''
-                    })
+                    body: JSON.stringify({ message: payMsg, role: 'assistant' })
                 });
-                // 不需要处理响应，只是为了保存对话记录
             } catch(e) { console.warn('保存付费提示对话记录失败:', e); }
             isLoading = false;
             await loadChatList();
