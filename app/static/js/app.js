@@ -2451,6 +2451,23 @@ function addMessageToUI(role, content, imageBase64) {
                 displayContent = content.replace(marker[0], '').trim();
             } catch(e) { console.warn('解析下载信息失败:', e); }
         }
+        // [付费提示] 检测 PAY_INFO 标记，渲染商务卡片
+        if (content.includes('<!--PAY_INFO:1-->')) {
+            displayContent = content.replace(/<!--PAY_INFO:1-->\n?/, '').trim();
+            bubble.innerHTML = `
+                <div style="padding:8px 4px; font-size:14px; line-height:2; color:#333;">
+                    <div style="font-size:15px; font-weight:700; color:#15589B; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #e0e0e0;">本版本为试用，如需使用：</div>
+                    <div style="margin-bottom:4px;">请汇款至：</div>
+                    <table style="width:100%; border-collapse:collapse; margin:4px 0 14px 0;">
+                        <tr><td style="padding:5px 0; color:#666; width:100px;">账户名称：</td><td style="padding:5px 0; font-weight:600;">北京全质科技股份有限公司</td></tr>
+                        <tr><td style="padding:5px 0; color:#666;">账户号码：</td><td style="padding:5px 0; font-weight:600; font-family:monospace; letter-spacing:0.5px;">11050163810000000267</td></tr>
+                        <tr><td style="padding:5px 0; color:#666;">开户银行：</td><td style="padding:5px 0; font-weight:600;">中国建设银行股份有限公司北京北洼路支行</td></tr>
+                        <tr><td style="padding:5px 0; color:#666;" colspan="2">（提供6%的增值税专用发票）</td></tr>
+                    </table>
+                    <div style="padding-top:4px;">或联系售前服务电话（微信同号）：<strong style="font-size:15px;">18601256219</strong></div>
+                </div>
+            `;
+        } else {
         renderBubbleMarkdown(bubble, displayContent);
         // 如果有下载信息，追加下载按钮
         if (downloadInfo && downloadInfo.files && downloadInfo.files.length > 0) {
@@ -2481,6 +2498,7 @@ function addMessageToUI(role, content, imageBase64) {
             downloadDiv.innerHTML = downloadHtml;
             bubble.appendChild(downloadDiv);
         }
+        } // 闭合 PAY_INFO 的 else
     } else {
         let htmlContent = escapeHtml(content).replace(/\n/g, '<br>');
         if (imageBase64) htmlContent += `<img class="chat-img" src="${imageBase64}" alt="上传的图片">`;
@@ -4535,8 +4553,17 @@ function generateDocument(type) {
                 if (!currentChatId) { isLoading = false; return; }
             }
             // 直接渲染付费信息，不走 AI（避免等待+浪费 token）
-            // 不保存到后端历史记录（刷新后会消失，但不影响正常功能）
+            // 保存带 PAY_INFO 标记的 AI 消息到后端，刷新后能重新渲染商务卡片
             const bubbleContent = bubble.querySelector('.bubble') || bubble;
+            const payMsgText = `本版本为试用，如需使用：
+请汇款至：
+账户名称：北京全质科技股份有限公司
+账户号码：11050163810000000267
+开户银行：中国建设银行股份有限公司北京北洼路支行
+（提供6%的增值税专用发票）
+或联系售前服务电话（微信同号）：18601256219`;
+            const payMsgWithMarker = `<!--PAY_INFO:1-->\n${payMsgText}`;
+            // 前端立即渲染商务卡片
             bubbleContent.innerHTML = `
                 <div style="padding:8px 4px; font-size:14px; line-height:2; color:#333;">
                     <div style="font-size:15px; font-weight:700; color:#15589B; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #e0e0e0;">本版本为试用，如需使用：</div>
@@ -4550,6 +4577,14 @@ function generateDocument(type) {
                     <div style="padding-top:4px;">或联系售前服务电话（微信同号）：<strong style="font-size:15px;">18601256219</strong></div>
                 </div>
             `;
+            // 保存到后端会话历史（只保存AI消息，不产生用户消息，不走AI）
+            try {
+                await fetch('/api/v1/history/' + currentChatId, {
+                    method: 'POST',
+                    headers: apiHeaders(),
+                    body: JSON.stringify({ message: payMsgWithMarker })
+                });
+            } catch(e) { console.warn('保存付费提示失败:', e); }
             isLoading = false;
             await loadChatList();
             scrollToBottom();

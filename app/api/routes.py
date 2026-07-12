@@ -2540,6 +2540,28 @@ async def get_history(session_id: str, auth_username: str = Depends(require_auth
 
 
 
+@router.post("/history/{session_id}", summary="添加AI消息到对话历史（不走AI）")
+async def add_ai_message_to_history(session_id: str, request: Request, auth_username: str = Depends(require_auth)):
+    """直接添加一条 AI 消息到会话历史（不走AI，用于付费提示等固定回复）
+    前端检测消息中的标记重新渲染对应样式"""
+    if not session_id.startswith(auth_username + "_"):
+        raise HTTPException(status_code=403, detail="无权操作该会话")
+    body = await request.json()
+    message = body.get("message", "")
+    if not message:
+        raise HTTPException(status_code=400, detail="message 不能为空")
+    from langchain_core.messages import AIMessage
+    from app.memory.manager import get_session_history, flush_session
+    history = get_session_history(session_id)
+    history.add_message(AIMessage(content=message))
+    parts = session_id.split("_", 1)
+    if len(parts) == 2:
+        update_chat_time(parts[0], session_id)
+    flush_session(session_id)
+    return {"success": True}
+
+
+
 
 
 @router.delete("/history/{session_id}", summary="清除对话历史")
