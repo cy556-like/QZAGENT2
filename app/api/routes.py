@@ -1286,6 +1286,8 @@ async def list_documents(
 
     subcategory: str = Query(None, description="二级子目录名（必须同时指定 category）"),
 
+    username: str = Depends(require_auth),
+
 ):
 
     """获取知识库中所有文档列表（支持分页，按智能体隔离）
