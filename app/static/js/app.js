@@ -377,7 +377,7 @@ function deleteAgent(agentId) {
         document.getElementById('kbUploadToggle').classList.remove('active');
         document.getElementById('agentKbBar').style.display = 'none';
         modeChatId['agent'] = null;
-        document.getElementById('chatTitle').textContent = '质量改进工程师助手';
+        document.getElementById('chatTitle').textContent = '体系智能体';
         updateKbUploadVisibility();
         updateHeaderKbVisibility();
     }
@@ -757,9 +757,9 @@ function switchMode(mode) {
     if (titleEl) {
         if (mode === 'agent' && currentAgentId) {
             const agent = myAgents.find(a => a.id === currentAgentId);
-            titleEl.textContent = agent ? agent.name : '质量改进工程师助手';
+            titleEl.textContent = agent ? agent.name : '体系智能体';
         } else {
-            titleEl.textContent = mode === 'agent' ? '质量改进工程师助手' : 'Chat';
+            titleEl.textContent = mode === 'agent' ? '体系智能体' : 'Chat';
         }
     }
     // Reset agent when switching to chat mode
@@ -1503,13 +1503,13 @@ function updateWelcomeContent() {
     } else {
         // 默认欢迎页
         welcomeEl.innerHTML = `
-            <h2>质量改进工程师助手</h2>
-            <p>专业模具AI智能体，独立赋能研发与质量管理</p>
+            <h2>体系智能体</h2>
+            <p>全质智能体平台，支持体系文件生成、知识库管理、一键生成质量手册和程序文件</p>
             <div class="quick-actions">
-                <span class="quick-action" onclick="fillQuick(this)" data-question="模具设计评审有哪些关键节点？" role="button" tabindex="0">设计评审</span>
-                <span class="quick-action" onclick="fillQuick(this)" data-question="VDA6.4过程审核要点是什么？" role="button" tabindex="0">过程审核</span>
-                <span class="quick-action" onclick="fillQuick(this)" data-question="帮我分析DFMEA风险" role="button" tabindex="0">DFMEA分析</span>
-                <span class="quick-action" onclick="fillQuick(this)" data-question="不合格品纠正措施怎么制定？" role="button" tabindex="0">CAPA建议</span>
+                <span class="quick-action" onclick="fillQuick(this)" data-question="如何编写质量手册？" role="button" tabindex="0">质量手册</span>
+                <span class="quick-action" onclick="fillQuick(this)" data-question="程序文件包含哪些内容？" role="button" tabindex="0">程序文件</span>
+                <span class="quick-action" onclick="fillQuick(this)" data-question="ISO9001标准有哪些要求？" role="button" tabindex="0">ISO9001</span>
+                <span class="quick-action" onclick="fillQuick(this)" data-question="内部审核的流程是什么？" role="button" tabindex="0">内部审核</span>
             </div>
         `;
     }
