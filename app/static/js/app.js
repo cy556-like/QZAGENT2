@@ -474,6 +474,7 @@ async function createNewChatForAgent(agentId) {
     currentAgentId = agentId;
     currentMode = 'agent';
     localStorage.setItem('chatMode', 'agent');
+    localStorage.setItem('lastAgentId', agentId);  // 记住上次选的智能体
 
     // 更新模式切换按钮样式
     const modeChatBtn = document.getElementById('modeChat');
@@ -1055,8 +1056,15 @@ async function doLogin() {
                 renderMyAgents();
                 updateKbUploadVisibility();
                 updateHeaderKbVisibility();
+                // 确保 currentAgentId 设置好（从 localStorage 恢复上次选的智能体）
                 if (!currentAgentId && myAgents.length > 0) {
-                    currentAgentId = myAgents[0].id;
+                    // 优先用 localStorage 记住的上次选的智能体
+                    const lastAgentId = localStorage.getItem('lastAgentId');
+                    if (lastAgentId && myAgents.some(a => a.id === lastAgentId)) {
+                        currentAgentId = lastAgentId;
+                    } else {
+                        currentAgentId = myAgents[0].id;
+                    }
                     currentMode = 'agent';
                     renderMyAgents();
                     updateGenButtonsVisibility();
@@ -1067,7 +1075,15 @@ async function doLogin() {
                 // 再检查是否有历史对话
                 const modeChats = getModeChats();
                 if (modeChats && modeChats.length > 0) {
-                    currentChatId = modeChats[0].chat_id;
+                    // 优先恢复上次活跃的会话
+                    const lastChatId = agentActiveChatId[currentAgentId];
+                    let chatToLoad = null;
+                    if (lastChatId && modeChats.some(c => c.chat_id === lastChatId)) {
+                        chatToLoad = lastChatId;
+                    } else {
+                        chatToLoad = modeChats[0].chat_id;
+                    }
+                    currentChatId = chatToLoad;
                     modeChatId['agent'] = currentChatId;
                     renderChatList();
                     await loadChatHistory(currentChatId);
