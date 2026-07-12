@@ -1148,6 +1148,9 @@ async def upload_document(file: UploadFile = File(...), agent_id: str = Form(Non
 
         )
 
+    # [用户隔离] agent_id 加用户名前缀
+    agent_id = _user_agent_id(agent_id, username)
+
 
 
     # 检查文件格式
@@ -1253,6 +1256,7 @@ async def upload_document(file: UploadFile = File(...), agent_id: str = Form(Non
 async def search_api(req: SearchRequest, agent_id: str = Query(None, description="智能体ID，为空时搜全局知识库")):
 
     """在文档库中搜索相关内容（支持按智能体隔离）"""
+    agent_id = _user_agent_id(agent_id, username)
 
     # 普通聊天模式没有知识库
 
@@ -1312,11 +1316,10 @@ async def list_documents(
 
             "page_size": page_size,
 
-            "total_pages": 0,
-
         }
 
-
+    # [用户隔离] agent_id 加用户名前缀
+    agent_id = _user_agent_id(agent_id, username)
 
     docs = list_indexed_documents(agent_id=agent_id, category=category, subcategory=subcategory)
 
@@ -1470,12 +1473,21 @@ async def get_document_stats(
 
 # ===== 二级子目录管理 API（三列布局用）=====
 
+def _user_agent_id(agent_id: str, username: str) -> str:
+    """[用户隔离] 把 agent_id 转成用户隔离的 ID
+    - __external__ 不转换（全质知识库所有用户共享）
+    - 其他 agent_id → {username}_{agent_id}（每个用户的文件独立存储）"""
+    if not agent_id or agent_id == "__external__":
+        return agent_id
+    return f"{username}_{agent_id}"
+
 @router.get("/kb/categories", summary="列出所有一级分类")
 async def list_categories_api(
     agent_id: str = Query(..., description="智能体ID"),
     username: str = Depends(require_auth),
 ):
     """列出指定智能体下所有一级分类名（从磁盘+ChromaDB+关键词索引合并）"""
+    agent_id = _user_agent_id(agent_id, username)
     from app.rag.document import list_categories
     try:
         cats = await asyncio.to_thread(list_categories, agent_id)
@@ -1533,6 +1545,7 @@ async def create_subsubcategory_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     subcategory = (body.get("subcategory") or "").strip()
     subsubcategory = (body.get("subsubcategory") or "").strip()
@@ -1565,6 +1578,7 @@ async def rename_subsubcategory_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     subcategory = (body.get("subcategory") or "").strip()
     old_subsub = (body.get("old_subsubcategory") or "").strip()
@@ -1592,6 +1606,7 @@ async def delete_subsubcategory_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     subcategory = (body.get("subcategory") or "").strip()
     subsubcategory = (body.get("subsubcategory") or "").strip()
@@ -1621,6 +1636,7 @@ async def create_subcategory_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     subcategory = (body.get("subcategory") or "").strip()
     if not agent_id or not category or not subcategory:
@@ -1674,6 +1690,7 @@ async def rename_subcategory_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     old_sub = (body.get("old_subcategory") or "").strip()
     new_sub = (body.get("new_subcategory") or "").strip()
@@ -1716,6 +1733,7 @@ async def delete_subcategory_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     subcategory = (body.get("subcategory") or "").strip()
     if not all([agent_id, category, subcategory]):
@@ -1759,6 +1777,7 @@ async def rename_category_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     old_cat = (body.get("old_category") or "").strip()
     new_cat = (body.get("new_category") or "").strip()
     if not all([agent_id, old_cat, new_cat]):
@@ -1819,6 +1838,7 @@ async def delete_category_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     if not all([agent_id, category]):
         raise HTTPException(status_code=400, detail="参数不完整")
@@ -1872,6 +1892,7 @@ async def create_category_api(
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="请求体必须是 JSON 对象")
     agent_id = (body.get("agent_id") or "").strip()
+    agent_id = _user_agent_id(agent_id, username)
     category = (body.get("category") or "").strip()
     if not agent_id or not category:
         raise HTTPException(status_code=400, detail="agent_id 和 category 不能为空")
@@ -2022,6 +2043,9 @@ async def download_document(filename: str, agent_id: str = Query(None, descripti
     if agent_id:
         if not re.match(r'^[A-Za-z0-9_-]+$', agent_id or ''):
             raise HTTPException(status_code=400, detail="非法的 agent_id")
+
+    # [用户隔离] agent_id 加用户名前缀
+    agent_id = _user_agent_id(agent_id, auth_username)
     
     # [Bug 3 修复] filename 白名单校验，防止路径穿越
     if not re.match(r'^[A-Za-z0-9_\u4e00-\u9fa5.\-() ]+$', filename or '') or '..' in filename or '/' in filename or '\\' in filename:
@@ -2496,6 +2520,9 @@ async def delete_document_api(filename: str, agent_id: str = Query(None, descrip
     注意：普通聊天模式（agent_id=None）没有知识库，不支持删除
 
     """
+
+    # [用户隔离] agent_id 加用户名前缀（admin 是管理员用户名）
+    agent_id = _user_agent_id(agent_id, admin)
 
     # 普通聊天模式没有知识库
 
@@ -3625,7 +3652,9 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             })
             await asyncio.sleep(0.1)
             # 三级查找：企业内部文件知识库 → 全质知识库 → 内置模板
-            template_path, need_convert, template_source = gm.find_template(agent_id=current_agent_id, documents_dir=settings.DOCUMENTS_DIR)
+            # [用户隔离] 企业内部文件按用户隔离
+            user_agent_id = _user_agent_id(current_agent_id, username)
+            template_path, need_convert, template_source = gm.find_template(agent_id=user_agent_id, documents_dir=settings.DOCUMENTS_DIR)
             if template_path is None:
                 yield await send({
                     "type": "error",
@@ -4011,7 +4040,7 @@ async def list_procedure_templates(request: Request, username: str = Depends(req
     else:
         cx = importlib.import_module('generate_procedure')
 
-    all_templates = cx.find_all_templates(agent_id=agent_id, documents_dir=settings.DOCUMENTS_DIR)
+    all_templates = cx.find_all_templates(agent_id=_user_agent_id(agent_id, username), documents_dir=settings.DOCUMENTS_DIR)
 
     # 检查企业内部文件是否有模板
     internal_count = sum(1 for t in all_templates if t['source'] == 'internal')
@@ -4173,7 +4202,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             })
             await asyncio.sleep(0.1)
             all_templates = cx.find_all_templates(
-                agent_id=current_agent_id, documents_dir=settings.DOCUMENTS_DIR)
+                agent_id=_user_agent_id(current_agent_id, username), documents_dir=settings.DOCUMENTS_DIR)
 
             # [Bug 修复] AI 智能去重：如果用户上传了文件，跳过全质知识库中同主题的文件
             # 避免用户上传的文件和全质知识库的文件重复生成
