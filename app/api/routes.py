@@ -4153,6 +4153,70 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             all_templates = cx.find_all_templates(
                 agent_id=current_agent_id, documents_dir=settings.DOCUMENTS_DIR)
 
+            # [Bug 修复] AI 智能去重：如果用户上传了文件，跳过全质知识库中同主题的文件
+            # 避免用户上传的文件和全质知识库的文件重复生成
+            internal_count = sum(1 for t in all_templates if t['source'] == 'internal')
+            external_count = sum(1 for t in all_templates if t['source'] == 'external')
+            if internal_count > 0 and external_count > 0:
+                from collections import defaultdict as _dd
+                dept_internal = _dd(list)
+                dept_external = _dd(list)
+                for t in all_templates:
+                    if t['source'] == 'internal':
+                        dept_internal[t['dept']].append(t['filename'])
+                    else:
+                        dept_external[t['dept']].append(t['filename'])
+                templates_to_skip = set()
+                try:
+                    from langchain_core.messages import HumanMessage as _HM, SystemMessage as _SM
+                    _dedup_llm = create_llm(short_response=True)
+                    for dept in dept_internal:
+                        internal_files = dept_internal[dept]
+                        external_files = dept_external.get(dept, [])
+                        if not external_files:
+                            continue
+                        dedup_prompt = f"""你是企业质量管理文件专家。请判断以下两组文件是否包含"同一个程序文件"（内容主题相同，只是文件名表述不同）。
+
+部门：{dept}
+
+企业内部上传的文件：
+{chr(10).join(f"{i+1}. {f}" for i, f in enumerate(internal_files))}
+
+全质知识库的文件：
+{chr(10).join(f"{i+1}. {f}" for i, f in enumerate(external_files))}
+
+判断规则：
+- "文件控制程序"、"文件管理规则"、"文件管理制度" → 是同一个程序
+- "记录控制程序"、"记录管理程序"、"记录管理规则" → 是同一个程序
+- 即：核心主题词相同的，就是同一个程序
+- 即使文件名格式完全不同，只要主题相同就算同一个
+
+请严格按以下JSON格式输出，只输出JSON：
+{{"skip_external":[需要跳过的全质知识库文件名列表，即被企业内部文件覆盖的]}}
+不确定的不要放入skip_external（宁可保留生成）。"""
+                        _dedup_messages = [_SM(content="你是企业质量管理文件专家，只输出JSON格式结果。"), _HM(content=dedup_prompt)]
+                        _dedup_resp = await _dedup_llm.ainvoke(_dedup_messages)
+                        _dedup_text = _dedup_resp.content.strip()
+                        _json_m = _re.search(r'\{[\s\S]*\}', _dedup_text)
+                        if _json_m:
+                            try:
+                                import json as _json_dedup
+                                _dedup_result = _json_dedup.loads(_json_m.group(0))
+                                _skip_list = _dedup_result.get('skip_external', [])
+                                for _skip_file in _skip_list:
+                                    if isinstance(_skip_file, str) and _skip_file.strip():
+                                        templates_to_skip.add((dept, _skip_file.strip(), 'external'))
+                                        logger.info(f"[程序生成AI去重] 部门={dept}, 跳过全质文件={_skip_file.strip()}")
+                            except Exception as _pe:
+                                logger.warning(f"[程序生成AI去重] 解析失败 dept={dept}: {_pe}")
+                except Exception as _de:
+                    logger.warning(f"[程序生成AI去重] 整体失败，跳过去重: {_de}")
+                # 过滤
+                if templates_to_skip:
+                    before_count = len(all_templates)
+                    all_templates = [t for t in all_templates if (t['dept'], t['filename'], t['source']) not in templates_to_skip]
+                    logger.info(f"[程序生成AI去重] 去重前 {before_count} 个模板，去重后 {len(all_templates)} 个")
+
             # 如果用户勾选了模板，只保留勾选的
             if selected_templates and isinstance(selected_templates, list) and len(selected_templates) > 0:
                 all_templates = [t for t in all_templates
