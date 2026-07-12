@@ -1,7 +1,7 @@
 {
-    "name": "ForgeAgent - AI智能体锻造平台",
-    "short_name": "ForgeAgent",
-    "description": "AI智能体锻造引擎，让每个想法都能锻造出专属Agent。基于 LangGraph ReAct 架构的智能体创建与管理平台。",
+    "name": "体系智能体 - 全质智能体平台",
+    "short_name": "体系智能体",
+    "description": "基于 LangGraph ReAct 架构的智能体创建与管理平台，支持体系文件生成、知识库管理、一键生成质量手册和程序文件。",
     "start_url": "/",
     "display": "standalone",
     "orientation": "portrait-primary",

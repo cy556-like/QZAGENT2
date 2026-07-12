@@ -1,5 +1,5 @@
 /**
- * ForgeAgent 前端应用
+ * 体系智能体 前端应用
  * 主脚本 - 处理认证、聊天、会话管理、导出等功能
  */
 
@@ -77,9 +77,34 @@ function getAgentWelcomeConfig(agentId) {
     return null;
 }
 
+// ===== localStorage key 迁移：forgeAgents → quanzhiAgents =====
+// 旧项目名 ForgeAgent 残留的 key，统一改为 quanzhiAgents（用户不可见，但保持品牌一致）
+// 迁移逻辑：如果新 key 不存在但旧 key 有数据，把旧 key 数据复制到新 key，然后删旧 key
+(function migrateForgeAgentsKey() {
+    const OLD_KEY = 'forgeAgents';
+    const NEW_KEY = 'quanzhiAgents';
+    try {
+        const newData = localStorage.getItem(NEW_KEY);
+        const oldData = localStorage.getItem(OLD_KEY);
+        if (!newData && oldData) {
+            // 新 key 没有，旧 key 有 → 迁移
+            localStorage.setItem(NEW_KEY, oldData);
+            localStorage.removeItem(OLD_KEY);
+            console.log('[迁移] forgeAgents → quanzhiAgents 完成');
+        } else if (newData && oldData) {
+            // 两个都有，以新 key 为准，删旧 key
+            localStorage.removeItem(OLD_KEY);
+            console.log('[迁移] 检测到重复 key，已删除旧的 forgeAgents');
+        }
+    } catch(e) {
+        console.warn('[迁移] forgeAgents key 迁移失败:', e);
+    }
+})();
+const AGENTS_STORAGE_KEY = 'quanzhiAgents';  // 统一用新 key
+
 function forceCorrectAgents() {
     let existing = [];
-    try { existing = JSON.parse(localStorage.getItem('forgeAgents') || '[]'); } catch(e) { existing = []; }
+    try { existing = JSON.parse(localStorage.getItem(AGENTS_STORAGE_KEY) || '[]'); } catch(e) { existing = []; }
     const existingMap = {};
     existing.forEach(a => { existingMap[a.id] = a; });
 
@@ -102,7 +127,7 @@ function forceCorrectAgents() {
         };
     });
 
-    localStorage.setItem('forgeAgents', JSON.stringify(correctAgents));
+    localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(correctAgents));
     return correctAgents;
 }
 
@@ -116,7 +141,7 @@ function filterAgents(agents) {
     return sortAgentsByFixedOrder(filtered);
 }
 
-let myAgents = filterAgents((function() { try { return JSON.parse(localStorage.getItem('forgeAgents') || 'null'); } catch(e) { return null; } })());
+let myAgents = filterAgents((function() { try { return JSON.parse(localStorage.getItem(AGENTS_STORAGE_KEY) || 'null'); } catch(e) { return null; } })());
 let currentAgentId = null;
 let agentKbUploadMode = false;
 
@@ -135,7 +160,7 @@ function _resolveMergeDirection(local, serverAgent) {
 async function saveAgents() {
     // 过滤：只保留允许的智能体
     myAgents = filterAgents(myAgents);
-    localStorage.setItem('forgeAgents', JSON.stringify(myAgents));
+    localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(myAgents));
     // [#12] 同步到服务器：检测数据是否真变了（chat_ids变化不算，服务端不存chat_ids）
     if (currentUser && authToken) {
         try {
@@ -156,7 +181,7 @@ async function saveAgents() {
             const data = await resp.json();
             if (data.success && data.agents && data.agents.length > 0) {
                 // Merge: preserve local chat_ids, use timestamp-based comparison for name/task/updated_at
-                const localAgents = JSON.parse(localStorage.getItem('forgeAgents') || '[]');
+                const localAgents = JSON.parse(localStorage.getItem(AGENTS_STORAGE_KEY) || '[]');
                 const localMap = {};
                 localAgents.forEach(a => { localMap[a.id] = a; });
                 const mergedAgents = data.agents.map(serverAgent => {
@@ -173,7 +198,7 @@ async function saveAgents() {
                     };
                 });
                 myAgents = filterAgents(mergedAgents);
-                localStorage.setItem('forgeAgents', JSON.stringify(myAgents));
+                localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(myAgents));
             }
         } catch (e) {
             console.warn('[智能体同步失败]', e);
@@ -202,7 +227,7 @@ async function syncAgentsFromServer(force = false) {
         
         if (getData.success && getData.agents && getData.agents.length > 0) {
             const serverAgents = getData.agents;
-            const localAgents = JSON.parse(localStorage.getItem('forgeAgents') || '[]');
+            const localAgents = JSON.parse(localStorage.getItem(AGENTS_STORAGE_KEY) || '[]');
             const localMap = {};
             localAgents.forEach(a => { localMap[a.id] = a; });
             
@@ -223,7 +248,7 @@ async function syncAgentsFromServer(force = false) {
             });
             
             myAgents = filterAgents(mergedAgents);
-            localStorage.setItem('forgeAgents', JSON.stringify(myAgents));
+            localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(myAgents));
             
             // Step 3: 只有本地有更新数据时才POST到服务器
             if (localHasNewer) {
@@ -280,7 +305,7 @@ async function rebuildChatIdsFromServer() {
                 matchingChatIds.forEach(id => existingIds.add(id));
                 agent.chat_ids = Array.from(existingIds);
             });
-            localStorage.setItem('forgeAgents', JSON.stringify(myAgents));
+            localStorage.setItem(AGENTS_STORAGE_KEY, JSON.stringify(myAgents));
             console.log('[rebuildChatIds] Rebuilt chat_ids from server');
         }
     } catch (e) {
