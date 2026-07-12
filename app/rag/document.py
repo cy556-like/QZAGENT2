@@ -2853,15 +2853,7 @@ def list_indexed_documents(agent_id: str = None, category: str = None, subcatego
                 file_path = os.path.join(scan_dir, fname)
                 if os.path.isfile(file_path):
                     sources.add(fname)
-    else:
-        scan_dir = settings.DOCUMENTS_DIR
-        if os.path.exists(scan_dir):
-            for fname in os.listdir(scan_dir):
-                ext = os.path.splitext(fname)[1].lower()
-                if ext in {'.pdf', '.txt', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
-                    file_path = os.path.join(scan_dir, fname)
-                    if os.path.isfile(file_path):
-                        sources.add(fname)
+    # [用户隔离修复] 目录不存在时返回空，不再 fallback 到 DOCUMENTS_DIR 根目录
 
     return sorted(list(sources))
 
