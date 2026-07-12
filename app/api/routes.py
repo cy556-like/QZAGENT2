@@ -748,7 +748,7 @@ async def chat_api(req: ChatRequest, username: str = Depends(get_current_user)):
 
         # 必须用 asyncio.to_thread 放到线程池，否则阻塞整个事件循环导致所有请求卡死
 
-        response = await asyncio.to_thread(chat, req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=req.agent_id, agent_task=req.agent_task, skill=req.skill)
+        response = await asyncio.to_thread(chat, req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=_user_agent_id(req.agent_id, username), agent_task=req.agent_task, skill=req.skill)
 
         # 更新会话时间
 
@@ -814,7 +814,7 @@ async def chat_stream_api(req: ChatRequest, request: Request, username: str = De
 
 
 
-    generator_factory = lambda: chat_stream_generator(req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=req.agent_id, agent_task=req.agent_task, skill=req.skill)
+    generator_factory = lambda: chat_stream_generator(req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=_user_agent_id(req.agent_id, username), agent_task=req.agent_task, skill=req.skill)
 
 
 
@@ -956,7 +956,7 @@ async def chat_with_file_stream(
 
             _sse_stream_wrapper(
 
-                lambda: chat_stream_generator_multimodal(multimodal_content, session_id, agent_id=agent_id, agent_task=agent_task, skill=skill or None),
+                lambda: chat_stream_generator_multimodal(multimodal_content, session_id, agent_id=_user_agent_id(agent_id, username), agent_task=agent_task, skill=skill or None),
 
                 request, session_id, start, endpoint="/chat-with-file/stream"
 
@@ -1020,7 +1020,7 @@ async def chat_with_file_stream(
 
             try:
 
-                index_result = await asyncio.to_thread(index_document, file_path, decoded_filename, agent_id=agent_id, category=category)
+                index_result = await asyncio.to_thread(index_document, file_path, decoded_filename, agent_id=_user_agent_id(agent_id, username), category=category)
 
                 indexing_mode = index_result.get('indexing_mode', 'unknown')
 
@@ -1094,7 +1094,7 @@ async def chat_with_file_stream(
 
         _sse_stream_wrapper(
 
-            lambda: chat_stream_generator(full_message_local, session_id, web_search=web_search, mode=mode, deep_think=deep_think, agent_id=aid_local, agent_task=atask_local, skill=skill or None),
+            lambda: chat_stream_generator(full_message_local, session_id, web_search=web_search, mode=mode, deep_think=deep_think, agent_id=_user_agent_id(aid_local, username), agent_task=atask_local, skill=skill or None),
 
             request, session_id, start, endpoint="/chat-with-file/stream"
 
@@ -1915,7 +1915,7 @@ async def create_category_api(
 
 @router.put("/documents/{filename}", summary="修改知识库文档内容")
 
-async def modify_document_api(filename: str, req: ModifyDocumentRequest):
+async def modify_document_api(filename: str, req: ModifyDocumentRequest, username: str = Depends(require_auth)):
 
     """
 
@@ -1937,7 +1937,7 @@ async def modify_document_api(filename: str, req: ModifyDocumentRequest):
 
     if req.agent_id:
 
-        agent_path = os.path.join(settings.DOCUMENTS_DIR, f"agent_{req.agent_id}", filename)
+        agent_path = os.path.join(settings.DOCUMENTS_DIR, f"agent_{_user_agent_id(req.agent_id, username)}", filename)
 
         if os.path.exists(agent_path):
 
@@ -1983,7 +1983,7 @@ async def modify_document_api(filename: str, req: ModifyDocumentRequest):
 
 
 
-    result = update_document(filename, final_content, agent_id=req.agent_id, async_reindex=True)  # 异步重索引，加速响应
+    result = update_document(filename, final_content, agent_id=_user_agent_id(req.agent_id, username), async_reindex=True)  # 异步重索引，加速响应
 
     if result["status"] == "not_found":
 
