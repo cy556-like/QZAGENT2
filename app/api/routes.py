@@ -3872,7 +3872,8 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                 "display_name": filename, "modifications_count": modifications_count}]
                 }
                 import json as _json_for_msg2
-                ai_msg += f"\n\n<!--DOWNLOAD_INFO:{_json_for_msg2.dumps(download_info, ensure_ascii=False)}-->"
+                # [Bug 修复] 标记放在消息开头，防止消息超 8000 字被截断时标记丢失
+                ai_msg = f"<!--DOWNLOAD_INFO:{_json_for_msg2.dumps(download_info, ensure_ascii=False)}-->\n\n" + ai_msg
                 history.add_message(_AIMsg2(content=ai_msg))
                 parts = session_id_for_export.split("_", 1)
                 if len(parts) == 2:
@@ -4335,8 +4336,14 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                 history = get_session_history(session_id_for_export)
                 # AI 消息：记录生成的文件列表 + 嵌入下载信息JSON标记
                 if generated_files:
-                    file_list = "\n".join([f"- {f.get('display_name', f.get('dept',''))}（{f.get('modifications_count',0)} 处修改）" for f in generated_files])
-                    ai_msg = f"已生成 {len(generated_files)} 个程序文件：\n{file_list}"
+                    # [Bug 修复] 文本部分只写摘要，详细文件列表通过下载按钮展示
+                    # 避免消息超 8000 字被截断导致下载按钮标记丢失
+                    success_count = len(generated_files)
+                    failed_count = len(failed_files)
+                    if failed_count > 0:
+                        ai_msg = f"已生成 {success_count} 个程序文件（{failed_count} 个失败）。点击下方按钮下载："
+                    else:
+                        ai_msg = f"已生成 {success_count} 个程序文件。点击下方按钮下载："
                     # 嵌入下载信息（前端检测此标记重新渲染下载按钮）
                     download_info = {
                         "type": "procedure_files",
@@ -4346,7 +4353,8 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                                     "dept": f.get("dept","")} for f in generated_files]
                     }
                     import json as _json_for_msg
-                    ai_msg += f"\n\n<!--DOWNLOAD_INFO:{_json_for_msg.dumps(download_info, ensure_ascii=False)}-->"
+                    # [Bug 修复] 标记放在消息开头，防止消息超长被截断时标记丢失
+                    ai_msg = f"<!--DOWNLOAD_INFO:{_json_for_msg.dumps(download_info, ensure_ascii=False)}-->\n\n" + ai_msg
                 else:
                     ai_msg = "生成失败，未产生任何文件。"
                 history.add_message(_AIMsg(content=ai_msg))
