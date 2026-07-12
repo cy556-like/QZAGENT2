@@ -667,6 +667,25 @@ function apiHeaders() {
     return headers;
 }
 
+// [Bug #4 修复] 统一 API 请求包装：自动处理 401（token过期）和网络错误
+// 用法和 fetch 一样，但会自动在 401 时 toast + doLogout
+async function apiFetch(url, options = {}) {
+    try {
+        const resp = await fetch(url, options);
+        if (resp.status === 401) {
+            showToast('登录已过期，请重新登录', 3000);
+            doLogout();
+            throw new Error('UNAUTHORIZED');
+        }
+        return resp;
+    } catch (e) {
+        if (e.message === 'UNAUTHORIZED') throw e;
+        // 网络错误
+        console.error('[apiFetch] 网络错误:', e);
+        throw e;
+    }
+}
+
 // ===== Theme =====
 function toggleTheme() {
     const html = document.documentElement;
@@ -715,8 +734,11 @@ function switchMode(mode) {
     currentMode = mode;
     localStorage.setItem('chatMode', mode);
 
-    document.getElementById('modeChat').classList.toggle('active', mode === 'chat');
-    document.getElementById('modeAgent').classList.toggle('active', mode === 'agent');
+    // [Bug #8 修复] 加 null 守卫，HTML 中可能没有 modeChat/modeAgent 元素
+    const modeChatBtn = document.getElementById('modeChat');
+    const modeAgentBtn = document.getElementById('modeAgent');
+    if (modeChatBtn) modeChatBtn.classList.toggle('active', mode === 'chat');
+    if (modeAgentBtn) modeAgentBtn.classList.toggle('active', mode === 'agent');
 
     const webToggle = document.getElementById('webSearchToggle');
     const thinkToggle = document.getElementById('deepThinkToggle');
@@ -839,8 +861,11 @@ function getModeChats() {
     if (saved === 'chat') {
         currentMode = 'chat';
         localStorage.setItem('chatMode', 'chat');
-        document.getElementById('modeChat').classList.add('active');
-        document.getElementById('modeAgent').classList.remove('active');
+        // [Bug #8 修复] 加 null 守卫
+        const modeChatBtn = document.getElementById('modeChat');
+        const modeAgentBtn = document.getElementById('modeAgent');
+        if (modeChatBtn) modeChatBtn.classList.add('active');
+        if (modeAgentBtn) modeAgentBtn.classList.remove('active');
     }
     // 初始化时根据状态决定知识库按钮可见性
     updateKbUploadVisibility();
@@ -1130,6 +1155,15 @@ function doLogout() {
     currentUser = null; userRole = null; authToken = null; selectedFile = null; currentChatId = null; allChats = []; currentAgentId = null; agentKbUploadMode = false;
     localStorage.removeItem('authToken');
     localStorage.removeItem('userRole');
+    // [Bug #1 修复] 清理所有用户态 localStorage，防止下一用户看到上一用户的数据
+    localStorage.removeItem('surveyData');
+    localStorage.removeItem('quanzhiAgents');
+    localStorage.removeItem('forgeAgents');  // 旧 key 兜底
+    localStorage.removeItem('agentActiveChatIds');
+    localStorage.removeItem('chatMode');
+    localStorage.removeItem('lastAgentId');
+    localStorage.removeItem('webSearch');
+    localStorage.removeItem('deepThink');
     // Hide KB page if open
     const kbPage = document.getElementById('kbPage');
     if (kbPage) kbPage.style.display = 'none';
@@ -1271,6 +1305,15 @@ window.addEventListener('popstate', function(e) {
             currentUser = null; userRole = null; authToken = null; selectedFile = null; currentChatId = null; allChats = []; currentAgentId = null; agentKbUploadMode = false;
             localStorage.removeItem('authToken');
             localStorage.removeItem('userRole');
+            // [Bug #1 修复] 清理所有用户态 localStorage
+            localStorage.removeItem('surveyData');
+            localStorage.removeItem('quanzhiAgents');
+            localStorage.removeItem('forgeAgents');
+            localStorage.removeItem('agentActiveChatIds');
+            localStorage.removeItem('chatMode');
+            localStorage.removeItem('lastAgentId');
+            localStorage.removeItem('webSearch');
+            localStorage.removeItem('deepThink');
             if (kbPage) kbPage.style.display = 'none';
             chatPage.style.display = 'none';
             loginModal.classList.add('show');
@@ -1487,7 +1530,8 @@ function fillQuick(el) {
 async function loadChatList() {
     if (!currentUser) return;
     try {
-        const resp = await fetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}`, { headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}`, { headers: apiHeaders() });
+        if (resp.status === 401) return;  // apiFetch 已处理
         const data = await resp.json();
         if (data.success) {
             allChats = data.chats;
@@ -1563,7 +1607,8 @@ async function createNewChat() {
     if (!currentUser) return;
     try {
         const chatTitle = currentAgentId ? (myAgents.find(a => a.id === currentAgentId)?.name || '新对话') : '新对话';
-        const resp = await fetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}&title=${encodeURIComponent(chatTitle)}&mode=${currentMode}&agent_id=${currentAgentId || ''}`, { method: 'POST', headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}&title=${encodeURIComponent(chatTitle)}&mode=${currentMode}&agent_id=${currentAgentId || ''}`, { method: 'POST', headers: apiHeaders() });
+        if (resp.status === 401) return;
         const data = await resp.json();
         if (data.success) {
             currentChatId = data.chat.chat_id;
@@ -1617,7 +1662,8 @@ async function loadChatHistory(chatId) {
     const container = document.getElementById('chatMessages');
     container.innerHTML = '';
     try {
-        const resp = await fetch(`/api/v1/history/${chatId}`, { headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/history/${chatId}`, { headers: apiHeaders() });
+        if (resp.status === 401) return;
         const data = await resp.json();
         const messages = data.messages || [];
         if (messages.length > 0) {
@@ -1645,7 +1691,7 @@ async function loadChatHistory(chatId) {
 async function deleteChatItem(chatId) {
     if (!confirm('确定删除这个对话？')) return;
     try {
-        await fetch(`/api/v1/chats/${chatId}?username=${encodeURIComponent(currentUser)}`, { method: 'DELETE', headers: apiHeaders() });
+        await apiFetch(`/api/v1/chats/${chatId}?username=${encodeURIComponent(currentUser)}`, { method: 'DELETE', headers: apiHeaders() });
 
         // Remove chat_id from all agents
         myAgents.forEach(agent => {
@@ -1692,7 +1738,7 @@ async function confirmRename() {
     if (!newTitle || !renamingChatId) return;
     const username = currentUser || '';
     try {
-        await fetch(`/api/v1/chats/${renamingChatId}/rename`, {
+        await apiFetch(`/api/v1/chats/${renamingChatId}/rename`, {
             method: 'PUT',
             headers: apiHeaders(),
             body: JSON.stringify({ username, chat_id: renamingChatId, new_title: newTitle })
@@ -4094,12 +4140,12 @@ function generateDocument(type) {
             hideSurveyForm();
         }
         document.getElementById('chatContent').classList.remove('centered');
-        const bubble = createStreamingBubble();
-        const bubbleContent = bubble.querySelector('.bubble') || bubble;
-
+        // [Bug #9 修复] 先检查 isLoading，避免双击产生孤儿空气泡
         (async () => {
             if (isLoading) return;
             isLoading = true;
+            const bubble = createStreamingBubble();
+            const bubbleContent = bubble.querySelector('.bubble') || bubble;
             if (!currentChatId) {
                 await createNewChat();
                 if (!currentChatId) { isLoading = false; return; }
@@ -4284,12 +4330,12 @@ function generateDocument(type) {
             hideSurveyForm();
         }
         document.getElementById('chatContent').classList.remove('centered');
-        const bubble = createStreamingBubble();
-        const bubbleContent = bubble.querySelector('.bubble') || bubble;
-
+        // [Bug #9 修复] 先检查 isLoading，避免双击产生孤儿空气泡
         (async () => {
             if (isLoading) return;
             isLoading = true;
+            const bubble = createStreamingBubble();
+            const bubbleContent = bubble.querySelector('.bubble') || bubble;
             if (!currentChatId) {
                 await createNewChat();
                 if (!currentChatId) { isLoading = false; return; }
@@ -4478,11 +4524,12 @@ function generateDocument(type) {
             hideSurveyForm();
         }
         document.getElementById('chatContent').classList.remove('centered');
-        const bubble = createStreamingBubble();
+        // [Bug #9 修复] 先检查 isLoading，避免双击产生孤儿空气泡
         const payMsg = '本版本为试用，如需使用：\n请汇款至：\n账户名称：北京全质科技股份有限公司\n账户号码：11050163810000000267\n开户银行：中国建设银行股份有限公司北京北洼路支行\n（提供6%的增值税专用发票）\n或联系售前服务电话（微信同号）：18601256219';
         (async () => {
             if (isLoading) return;
             isLoading = true;
+            const bubble = createStreamingBubble();
             if (!currentChatId) {
                 await createNewChat();
                 if (!currentChatId) { isLoading = false; return; }
