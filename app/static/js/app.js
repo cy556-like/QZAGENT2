@@ -2403,7 +2403,48 @@ function addMessageToUI(role, content, imageBase64) {
     bubble.className = 'bubble';
 
     if (role === 'assistant') {
-        renderBubbleMarkdown(bubble, content);
+        // [Bug 修复] 检测消息中的下载信息标记，重新渲染下载按钮
+        // 标记格式：<!--DOWNLOAD_INFO:{"type":"procedure_files","files":[...]}-->
+        let displayContent = content;
+        let downloadInfo = null;
+        const marker = /<!--DOWNLOAD_INFO:(\{[\s\S]*?\})-->/.exec(content);
+        if (marker) {
+            try {
+                downloadInfo = JSON.parse(marker[1]);
+                // 去掉标记，只显示文字部分
+                displayContent = content.replace(marker[0], '').trim();
+            } catch(e) { console.warn('解析下载信息失败:', e); }
+        }
+        renderBubbleMarkdown(bubble, displayContent);
+        // 如果有下载信息，追加下载按钮
+        if (downloadInfo && downloadInfo.files && downloadInfo.files.length > 0) {
+            let downloadHtml = '<div style="margin-top:12px;">';
+            // 按部门分组（procedure_files 才分组，manual_file 单文件不分组）
+            if (downloadInfo.type === 'procedure_files') {
+                const deptGroups = {};
+                const deptOrder = [];
+                downloadInfo.files.forEach(f => {
+                    const d = f.dept || '其他';
+                    if (!deptGroups[d]) { deptGroups[d] = []; deptOrder.push(d); }
+                    deptGroups[d].push(f);
+                });
+                deptOrder.forEach(dept => {
+                    downloadHtml += `<div style="margin:14px 0 4px;font-weight:bold;color:#15589B;border-left:3px solid #15589B;padding-left:8px;font-size:14px;">${escapeHtml(dept)}</div>`;
+                    deptGroups[dept].forEach(f => {
+                        downloadHtml += `<div style="margin:6px 0 6px 16px;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename || f.dept)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                    });
+                });
+            } else {
+                // manual_file 或其他：直接列出
+                downloadInfo.files.forEach(f => {
+                    downloadHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                });
+            }
+            downloadHtml += '</div>';
+            const downloadDiv = document.createElement('div');
+            downloadDiv.innerHTML = downloadHtml;
+            bubble.appendChild(downloadDiv);
+        }
     } else {
         let htmlContent = escapeHtml(content).replace(/\n/g, '<br>');
         if (imageBase64) htmlContent += `<img class="chat-img" src="${imageBase64}" alt="上传的图片">`;
