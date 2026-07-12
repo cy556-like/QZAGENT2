@@ -4534,32 +4534,16 @@ function generateDocument(type) {
                 await createNewChat();
                 if (!currentChatId) { isLoading = false; return; }
             }
-            // 直接渲染付费信息卡片，不走 AI（避免等待+浪费 token）
+            // 直接渲染付费信息，不走 AI（避免等待+浪费 token）
             const bubbleContent = bubble.querySelector('.bubble') || bubble;
             bubbleContent.innerHTML = `
-                <div style="padding:8px 4px; font-size:14px; line-height:1.9; color:#333;">
-                    <div style="font-size:16px; font-weight:700; color:#15589B; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #e0e0e0;">本功能为付费功能，如需使用请联系：</div>
-                    <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
-                        <tr>
-                            <td style="padding:6px 0; color:#666; width:90px; vertical-align:top;">账户名称</td>
-                            <td style="padding:6px 0; font-weight:600;">北京全质科技股份有限公司</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:6px 0; color:#666; vertical-align:top;">账户号码</td>
-                            <td style="padding:6px 0; font-weight:600; font-family:monospace; letter-spacing:0.5px;">11050163810000000267</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:6px 0; color:#666; vertical-align:top;">开户银行</td>
-                            <td style="padding:6px 0; font-weight:600;">中国建设银行股份有限公司北京北洼路支行</td>
-                        </tr>
-                    </table>
-                    <div style="padding:10px 14px; background:#f0f7ff; border-radius:8px; border-left:3px solid #15589B; margin-bottom:14px; font-size:13px; color:#15589B;">
-                        汇款后请保留凭证，可提供 6% 增值税专用发票。
-                    </div>
-                    <div style="padding:10px 14px; background:#fff8e1; border-radius:8px; border-left:3px solid #f9a825; font-size:13px; color:#7a5c00;">
-                        售前服务电话（微信同号）：<strong style="font-size:15px; letter-spacing:0.5px;">18601256219</strong>
-                    </div>
-                </div>
+                <div style="padding:8px 4px; font-size:14px; line-height:1.9; color:#333; white-space:pre-wrap;">本版本为试用，如需使用：
+请汇款至：
+账户名称：北京全质科技股份有限公司
+账户号码：11050163810000000267
+开户银行：中国建设银行股份有限公司北京北洼路支行
+（提供6%的增值税专用发票）
+或联系售前服务电话（微信同号）：18601256219</div>
             `;
             // 保存到会话历史
             try {
