@@ -424,19 +424,8 @@ async function switchToAgent(agentId) {
     modeChatId['agent'] = null;
     clearChatUI();
     renderChatList();
-    // 确保欢迎页可见（但如果没有调研数据，提示用户先填写）
-    const welcomeEl = document.getElementById('welcomeCenter');
-    if (welcomeEl) {
-        const hasSurvey = localStorage.getItem('surveyData');
-        if (hasSurvey) {
-            // 已填写调研 → 显示正常欢迎页
-            welcomeEl.style.display = '';
-        } else {
-            // 未填写调研 → 显示提示
-            welcomeEl.style.display = '';
-            welcomeEl.innerHTML = '<h2>体系智能体</h2><p>请先点击左侧"填写体系调研"填写企业信息</p><div class="quick-actions"></div>';
-        }
-    }
+    // 欢迎页内容由 updateWelcomeContent 统一管理
+    updateCenteredMode();
     const chatContent = document.getElementById('chatContent');
     if (chatContent) chatContent.classList.add('centered');
 }
@@ -1501,17 +1490,18 @@ function updateWelcomeContent() {
             ${questionsHtml}
         `;
     } else {
-        // 默认欢迎页
-        welcomeEl.innerHTML = `
-            <h2>体系智能体</h2>
-            <p>全质智能体平台，支持体系文件生成、知识库管理、一键生成质量手册和程序文件</p>
-            <div class="quick-actions">
-                <span class="quick-action" onclick="fillQuick(this)" data-question="如何编写质量手册？" role="button" tabindex="0">质量手册</span>
-                <span class="quick-action" onclick="fillQuick(this)" data-question="程序文件包含哪些内容？" role="button" tabindex="0">程序文件</span>
-                <span class="quick-action" onclick="fillQuick(this)" data-question="ISO9001标准有哪些要求？" role="button" tabindex="0">ISO9001</span>
-                <span class="quick-action" onclick="fillQuick(this)" data-question="内部审核的流程是什么？" role="button" tabindex="0">内部审核</span>
-            </div>
-        `;
+        // 没有选智能体时不显示默认欢迎页
+        // 如果已填调研，显示"体系调研完毕"提示；否则隐藏（会被 showSurveyForm 覆盖）
+        const hasSurvey = localStorage.getItem('surveyData');
+        if (hasSurvey) {
+            welcomeEl.innerHTML = `
+                <h2>全质体系智能体</h2>
+                <p>体系调研完毕，请点击左边侧边栏的按钮（如：一键生成质量手册），系统将自动生成需要的文件</p>
+            `;
+            welcomeEl.style.display = '';
+        } else {
+            welcomeEl.style.display = 'none';
+        }
     }
 }
 
