@@ -1506,6 +1506,7 @@ async def list_subcategories_api(
     username: str = Depends(require_auth),
 ):
     """列出指定智能体的某一级分类下所有二级子目录名"""
+    agent_id = _user_agent_id(agent_id, username)
     from app.rag.document import list_subcategories
     try:
         subcats = await asyncio.to_thread(list_subcategories, agent_id, category)
@@ -1525,6 +1526,7 @@ async def list_subsubcategories_api(
     username: str = Depends(require_auth),
 ):
     """列出指定智能体的某二级子目录下所有三级子目录名"""
+    agent_id = _user_agent_id(agent_id, username)
     from app.rag.document import list_subsubcategories
     try:
         subsubcats = await asyncio.to_thread(list_subsubcategories, agent_id, category, subcategory)
