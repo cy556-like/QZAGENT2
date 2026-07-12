@@ -2961,6 +2961,19 @@ def list_categories(agent_id: str) -> list[str]:
             return ['体系文件', '按产品分类', '按工艺分类', '其他']
         return ['手册', '程序文件', '三层次文件', '记录表格', '其他']
 
+    # [用户隔离修复] 企业内部文件：始终确保 5 个默认分类目录存在
+    # 避免用户只上传了某个分类的文件后，其他分类目录消失
+    if agent_id != "__external__":
+        default_cats = ['手册', '程序文件', '三层次文件', '记录表格', '其他']
+        for cat in default_cats:
+            cat_path = os.path.join(agent_dir, cat)
+            if not os.path.exists(cat_path):
+                try:
+                    os.makedirs(cat_path, exist_ok=True)
+                except Exception:
+                    pass
+            cats.add(cat)
+
     # 固定顺序
     if agent_id == "__external__":
         fixed_order = ['体系文件', '按产品分类', '按工艺分类', '其他']
@@ -3279,7 +3292,23 @@ def delete_subcategory(agent_id: str, category: str, subcategory: str) -> dict:
     # 4. 删除磁盘文件夹
     if os.path.exists(sub_dir):
         import shutil
-        shutil.rmtree(sub_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(sub_dir)
+        except Exception as e:
+            logger.error(f"删除子目录失败: {sub_dir}, 错误: {e}")
+            return {"status": "error", "message": f"删除子目录失败: {e}"}
+
+    # [用户隔离修复] 删除子目录后，确保 5 个默认分类目录仍存在
+    # 避免 delete_subcategory 的同步逻辑删掉了分类目录
+    if agent_id != "__external__":
+        default_cats = ['手册', '程序文件', '三层次文件', '记录表格', '其他']
+        for cat in default_cats:
+            cat_path = os.path.join(_get_agent_dir(agent_id), cat)
+            if not os.path.exists(cat_path):
+                try:
+                    os.makedirs(cat_path, exist_ok=True)
+                except Exception:
+                    pass
 
     return {"status": "success", "message": f"已删除子目录「{subcategory}」及其下 {len(files_to_delete)} 个文件"}
 
