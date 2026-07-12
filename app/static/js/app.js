@@ -3810,6 +3810,17 @@ async function finishSurveyUpload() {
     if (welcomeEl) welcomeEl.style.display = '';
     // 更新 history
     history.replaceState({page: 'chat'}, '');
+    // [Bug 修复] 确保进入 agent 模式 + currentAgentId 有值
+    currentMode = 'agent';
+    localStorage.setItem('chatMode', 'agent');
+    if (!currentAgentId) {
+        const lastAgentId = localStorage.getItem('lastAgentId');
+        if (lastAgentId && myAgents.some(a => a.id === lastAgentId)) {
+            currentAgentId = lastAgentId;
+        } else if (myAgents.length > 0) {
+            currentAgentId = myAgents[0].id;
+        }
+    }
     // 刷新界面
     renderMyAgents();
     updateGenButtonsVisibility();
