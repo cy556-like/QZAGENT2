@@ -2511,22 +2511,22 @@ async def download_export_document(filename: str):
 
 @router.delete("/documents/{filename}", summary="从知识库删除文档")
 
-async def delete_document_api(filename: str, agent_id: str = Query(None, description="智能体ID，为空时删全局知识库文档"), admin: str = Depends(require_admin)):
+async def delete_document_api(filename: str, agent_id: str = Query(None, description="智能体ID，为空时删全局知识库文档"), username: str = Depends(require_auth)):
 
     """
 
-    从知识库中删除指定文档（仅管理员可操作）
+    从知识库中删除指定文档（登录用户可操作自己的知识库）
 
     同时删除 ChromaDB 中的向量分块和原始文件
 
-    
+
 
     注意：普通聊天模式（agent_id=None）没有知识库，不支持删除
 
     """
 
-    # [用户隔离] agent_id 加用户名前缀（admin 是管理员用户名）
-    agent_id = _user_agent_id(agent_id, admin)
+    # [用户隔离] agent_id 加用户名前缀
+    agent_id = _user_agent_id(agent_id, username)
 
     # 普通聊天模式没有知识库
 

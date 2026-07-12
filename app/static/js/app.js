@@ -5302,7 +5302,7 @@ async function loadKbPageDocs() {
                 '<div class="kb-doc-name" title="' + safeName + '">' + safeName + '</div>' +
                 '<div class="kb-doc-meta">' + ext.toUpperCase() + '</div>' +
                 '</div>' +
-                (userRole === 'admin' ? '<button class="kb-doc-delete-btn" onclick="deleteKbPageDoc(\'' + safeNameForJs + '\', this)" title="删除文档" aria-label="删除">' +
+                (userRole === 'admin' || userRole === 'user' ? '<button class="kb-doc-delete-btn" onclick="deleteKbPageDoc(\'' + safeNameForJs + '\', this)" title="删除文档" aria-label="删除">' +
                 '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>' +
                 ' 删除</button>' : '') +
                 '</div>';
@@ -5374,7 +5374,6 @@ async function uploadToKbPage(file) {
 }
 
 async function deleteKbPageDoc(filename, btnEl) {
-    if (userRole !== 'admin') { showToast('仅管理员可删除文档'); return; }
     if (!confirm('确定删除文档「' + filename + '」？此操作不可恢复！')) return;
     const docItem = btnEl.closest('.kb-doc-item');
     btnEl.disabled = true;
