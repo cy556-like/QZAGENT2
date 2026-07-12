@@ -3859,12 +3859,12 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             # [Bug 修复] 把对话记录保存到会话历史，否则重启后前端看不到
             try:
                 from app.memory.manager import get_session_history, flush_session
-                from langchain_core.messages import HumanMessage as HM2, AIMessage as AM2
+                from langchain_core.messages import AIMessage as _AIMsg2
                 history = get_session_history(session_id_for_export)
                 user_msg = f"一键生成质量手册（公司：{survey_data.get('sv_company_name','未填写')}）"
-                history.add_message(HM2(content=user_msg))
+                history.add_message(HumanMessage(content=user_msg))
                 ai_msg = f"已生成质量手册：{filename}（{modifications_count} 处修改）\n{template_source_text}"
-                history.add_message(AM2(content=ai_msg))
+                history.add_message(_AIMsg2(content=ai_msg))
                 parts = session_id_for_export.split("_", 1)
                 if len(parts) == 2:
                     update_chat_time(parts[0], session_id_for_export)
@@ -4319,8 +4319,8 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             # 最终汇总
             # [Bug 修复] 把对话记录保存到会话历史，否则重启后前端看不到
             try:
-                from app.memory.manager import get_session_history
-                from langchain_core.messages import HumanMessage, AIMessage
+                from app.memory.manager import get_session_history, flush_session
+                from langchain_core.messages import AIMessage as _AIMsg
                 history = get_session_history(session_id_for_export)
                 # 用户消息：记录用户做了一键生成程序文件的操作
                 user_msg = f"一键生成程序文件（公司：{survey_data.get('sv_company_name','未填写')}，共 {len(generated_files)} 个文件成功，{len(failed_files)} 个失败）"
@@ -4331,12 +4331,11 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     ai_msg = f"已生成 {len(generated_files)} 个程序文件：\n{file_list}"
                 else:
                     ai_msg = "生成失败，未产生任何文件。"
-                history.add_message(AIMessage(content=ai_msg))
+                history.add_message(_AIMsg(content=ai_msg))
                 # 更新会话时间 + flush 到磁盘
                 parts = session_id_for_export.split("_", 1)
                 if len(parts) == 2:
                     update_chat_time(parts[0], session_id_for_export)
-                from app.memory.manager import flush_session
                 flush_session(session_id_for_export)
                 logger.info(f"[CXskill] 对话记录已保存到会话历史: {session_id_for_export}")
             except Exception as save_err:
