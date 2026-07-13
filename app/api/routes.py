@@ -992,7 +992,7 @@ async def chat_with_file_stream(
 
             # 知识库模式 ON + 有 agent_id：文件存到智能体知识库目录（删对话不删除）
 
-            agent_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{agent_id}")
+            agent_dir = os.path.join(settings.DOCUMENTS_DIR, f"agent_{_user_agent_id(agent_id, username)}")
 
             os.makedirs(agent_dir, exist_ok=True)
 
@@ -1253,7 +1253,7 @@ async def upload_document(file: UploadFile = File(...), agent_id: str = Form(Non
 
 @router.post("/search", summary="搜索文档内容")
 
-async def search_api(req: SearchRequest, agent_id: str = Query(None, description="智能体ID，为空时搜全局知识库")):
+async def search_api(req: SearchRequest, agent_id: str = Query(None, description="智能体ID，为空时搜全局知识库"), username: str = Depends(require_auth)):
 
     """在文档库中搜索相关内容（支持按智能体隔离）"""
     agent_id = _user_agent_id(agent_id, username)
@@ -1426,6 +1426,7 @@ async def list_documents(
 @router.get("/documents/stats", summary="获取知识库统计信息")
 async def get_document_stats(
     agent_id: str = Query(None, description="智能体ID，为空时查全局知识库"),
+    username: str = Depends(require_auth),
 ):
     """获取知识库的文档数量和文本片段总数（按智能体隔离）
     
@@ -1434,6 +1435,9 @@ async def get_document_stats(
     2. 关键词索引中的条目数
     取两者中较大的值作为总数
     """
+    # [用户隔离] agent_id 加用户名前缀
+    agent_id = _user_agent_id(agent_id, username)
+
     if not agent_id:
         return {"total_documents": 0, "total_chunks": 0, "indexing_mode": "none"}
     
@@ -3740,7 +3744,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 # 计算相对路径（从 documents 目录开始）
                 try:
                     rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
-                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + current_agent_id + '/', '企业内部文件/')
+                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + _user_agent_id(current_agent_id, username) + '/', '企业内部文件/')
                 except Exception:
                     template_path_display = '企业内部文件/' + template_filename
                 yield await send({
@@ -3946,7 +3950,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             if template_source == 'internal':
                 try:
                     rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
-                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + current_agent_id + '/', '企业内部文件/')
+                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + _user_agent_id(current_agent_id, username) + '/', '企业内部文件/')
                 except Exception:
                     template_path_display = '企业内部文件/' + template_filename
                 template_source_text = f"基于【企业内部文件】知识库上传的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}"
