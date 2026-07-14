@@ -4531,7 +4531,7 @@ function generateDocument(type) {
     }
 
     // 付费功能：三层次文件、记录表格、不合格项整改
-    if (type === 'third-level' || type === 'record' || type === 'rectification') {
+    if (type === 'third-level' || type === 'record' || type === 'rectification' || type === 'system-implementation') {
         const surveyData = getSurveyData();
         if (!surveyData) {
             showToast('请先点击"填写体系调研"填写企业信息', 3000);
