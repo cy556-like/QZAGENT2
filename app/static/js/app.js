@@ -3763,6 +3763,20 @@ function collectSurveyData() {
     document.querySelectorAll('#sv_org_table input[type="text"]').forEach(inp => {
         data.sv_org[inp.getAttribute('data-field')] = inp.value;
     });
+    // 保存自定义行的顺序信息（用于加载时重建行）
+    const customRows = [];
+    document.querySelectorAll('#sv_org_table tbody tr').forEach(tr => {
+        const funcInput = tr.querySelector('input[data-field$="_func"]');
+        if (funcInput) {
+            const fieldBase = funcInput.getAttribute('data-field').replace('_func', '');
+            customRows.push({
+                func: funcInput.value,
+                dept: (tr.querySelector('input[data-field="' + fieldBase + '_dept"]') || {}).value || '',
+                head: (tr.querySelector('input[data-field="' + fieldBase + '_head"]') || {}).value || ''
+            });
+        }
+    });
+    data.sv_org_custom_rows = customRows;
     return data;
 }
 
@@ -4066,6 +4080,28 @@ function _fillSurveyFormUI(data) {
             if (inp) inp.value = data.sv_org[field];
         });
     }
+    // 恢复自定义行
+    if (data.sv_org_custom_rows && data.sv_org_custom_rows.length > 0) {
+        data.sv_org_custom_rows.forEach(row => {
+            addOrgRow(row.func, row.dept, row.head);
+        });
+    }
+}
+
+// 添加自定义部门行
+let orgRowIndex = 0;
+function addOrgRow(customFunc, customDept, customHead) {
+    const tbody = document.querySelector('#sv_org_table tbody');
+    if (!tbody) return;
+    orgRowIndex++;
+    const funcName = customFunc || '';
+    const tr = document.createElement('tr');
+    const fieldBase = 'org_custom_' + orgRowIndex;
+    tr.innerHTML = '<td><input type="text" value="' + escapeHtml(funcName) + '" placeholder="职能" data-field="' + fieldBase + '_func" style="width:100%;border:none;background:transparent;font-size:13px;"></td>' +
+        '<td><input type="text" value="' + escapeHtml(customDept || '') + '" data-field="' + fieldBase + '_dept"></td>' +
+        '<td><input type="text" value="' + escapeHtml(customHead || '') + '" data-field="' + fieldBase + '_head"></td>' +
+        '<td style="width:30px;text-align:center;"><span onclick="this.closest(\'tr\').remove()" style="cursor:pointer;color:#e63946;font-size:16px;" title="删除">×</span></td>';
+    tbody.appendChild(tr);
 }
 
 async function loadSurveyData() {
