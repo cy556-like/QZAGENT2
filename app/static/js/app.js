@@ -3799,21 +3799,16 @@ async function saveSurveyData() {
     } catch (e) {
         console.warn('[调研保存] 服务器保存失败，仅本地保存:', e);
     }
-    // 隐藏调研表单，显示文件上传页面
+    // 隐藏调研表单，直接进入对话（跳过文件上传页面）
     const surveyPage = document.getElementById('surveyPage');
     const surveyUploadPage = document.getElementById('surveyUploadPage');
     if (surveyPage) surveyPage.style.display = 'none';
-    if (surveyUploadPage) surveyUploadPage.style.display = 'block';
-    // [Bug 2 修复] 清空上一次的上传文件列表，避免重新进入时残留
-    surveyUploadedFiles = [];
-    renderSurveyUploadedList();
-    const statusEl2 = document.getElementById('surveyUploadStatus2');
-    if (statusEl2) { statusEl2.style.display = 'none'; statusEl2.innerHTML = ''; }
-    // 进入上传页时按钮默认可点击（用户还没上传文件）
-    updateSurveyFinishBtnState();
+    if (surveyUploadPage) surveyUploadPage.style.display = 'none';
     // 更新 history
-    history.pushState({page: 'survey_upload'}, '');
+    history.pushState({page: 'chat'}, '');
     showToast('✓ 体系调研信息已保存', 2000);
+    // 直接进入对话界面
+    await finishSurveyUpload();
 }
 
 // 从上传页面进入对话
