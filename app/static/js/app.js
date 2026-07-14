@@ -5274,17 +5274,8 @@ function hideKbPage() {
     // 恢复侧边栏
     if (sidebar) sidebar.style.display = '';
     updateCenteredMode();
-    // [BUG FIX] 使用 history.back() 弹出 kb 条目，而不是 replaceState 堆积 chat 条目
-    // 旧代码 replaceState({page:'chat'}) 会把 kb 条目替换成 chat，导致 history 栈
-    // 堆积大量 chat 条目，用户点后退时在 chat→chat 间跳转，UI 不变，看起来"没反应"
-    // 改用 history.back() 让浏览器自动 pop kb 条目，回到前一个 chat 条目
-    // popstate 监听器会接管 UI 切换（幂等，重复执行无副作用）
-    if (history.state && history.state.page === 'kb') {
-        // 设置标志位，告诉 popstate 监听器这是 hideKbPage 主动触发的后退
-        // 不要误判为"chat→chat 堆积"而连续后退（那会错误地退到 login 页）
-        window._navigatingFromKb = true;
-        history.back();
-    }
+    // 直接切换到对话界面（不用 history.back，避免回到填表页面）
+    history.replaceState({page: 'chat'}, '');
 }
 
 async function loadKbPageDocs() {
