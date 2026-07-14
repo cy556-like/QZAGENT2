@@ -4097,8 +4097,8 @@ function addOrgRow(customFunc, customDept, customHead) {
     const funcName = customFunc || '';
     const fieldBase = 'org_custom_' + orgRowIndex;
     const tr = document.createElement('tr');
-    // 第一列用 input 但去掉所有默认间距，和固定行纯文字对齐
-    tr.innerHTML = '<td style="padding:0;"><input type="text" value="' + escapeHtml(funcName) + '" placeholder="职能" data-field="' + fieldBase + '_func" style="border:none;background:transparent;font:inherit;width:100%;padding:0;margin:0;outline:none;"></td>' +
+    // 第一列用 input 但去掉边框背景，保留 td 默认 padding，和固定行对齐
+    tr.innerHTML = '<td><input type="text" value="' + escapeHtml(funcName) + '" placeholder="职能" data-field="' + fieldBase + '_func" style="border:none;background:transparent;font:inherit;width:100%;padding:6px 0;margin:0;outline:none;font-weight:600;color:#555;"></td>' +
         '<td><input type="text" value="' + escapeHtml(customDept || '') + '" data-field="' + fieldBase + '_dept"></td>' +
         '<td><input type="text" value="' + escapeHtml(customHead || '') + '" data-field="' + fieldBase + '_head"></td>' +
         '<td style="width:30px;text-align:center;"><span onclick="this.closest(\'tr\').remove()" style="cursor:pointer;color:#e63946;font-size:16px;" title="删除">×</span></td>';
