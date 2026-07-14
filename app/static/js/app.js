@@ -4095,9 +4095,9 @@ function addOrgRow(customFunc, customDept, customHead) {
     if (!tbody) return;
     orgRowIndex++;
     const funcName = customFunc || '';
-    const tr = document.createElement('tr');
     const fieldBase = 'org_custom_' + orgRowIndex;
-    tr.innerHTML = '<td><input type="text" value="' + escapeHtml(funcName) + '" placeholder="职能" data-field="' + fieldBase + '_func" style="width:100%;border:none;background:transparent;font-size:13px;"></td>' +
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td><input type="text" value="' + escapeHtml(funcName) + '" placeholder="职能" data-field="' + fieldBase + '_func" style="border:none;background:transparent;font:inherit;width:100%;"></td>' +
         '<td><input type="text" value="' + escapeHtml(customDept || '') + '" data-field="' + fieldBase + '_dept"></td>' +
         '<td><input type="text" value="' + escapeHtml(customHead || '') + '" data-field="' + fieldBase + '_head"></td>' +
         '<td style="width:30px;text-align:center;"><span onclick="this.closest(\'tr\').remove()" style="cursor:pointer;color:#e63946;font-size:16px;" title="删除">×</span></td>';
