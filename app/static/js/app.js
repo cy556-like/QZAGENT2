@@ -3126,8 +3126,8 @@ async function loadExtKbCategories() {
                     '<span class="cat-arrow">▾</span>' +
                     '<span class="kb-cat-name">' + safeCat + '</span>' +
                     '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
-                        '<span class="kb-cat-add-sub" onclick="addExtKbSubcategoryPrompt(\'' + jsCat + '\', event)" title="新建子目录">+</span>' +
-                        '<span class="kb-cat-edit" onclick="renameExtKbCategory(\'' + jsCat + '\', event)" title="重命名">✎</span>' +
+                        (userRole === 'admin' ? '<span class="kb-cat-add-sub" onclick="addExtKbSubcategoryPrompt(\'' + jsCat + '\', event)" title="新建子目录">+</span>' : '') +
+                        (userRole === 'admin' ? '<span class="kb-cat-edit" onclick="renameExtKbCategory(\'' + jsCat + '\', event)" title="重命名">✎</span>' : '') +
                         extCatDelBtn +
                     '</span>' +
                 '</div>' +
@@ -3170,7 +3170,7 @@ async function loadExtKbSubcategoriesForGroup(cat) {
             html += '<button class="kb-cat-item" onclick="selectExtKbSubcategory(\'' + jsCat + '\', \'' + jsSub + '\', this)">' +
                 '<span class="kb-cat-name">' + safeSub + '</span>' +
                 '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
-                    '<span class="kb-cat-edit" onclick="renameExtKbSubcategory(\'' + jsCat + '\', \'' + jsSub + '\', event)" title="重命名">✎</span>' +
+                    (userRole === 'admin' ? '<span class="kb-cat-edit" onclick="renameExtKbSubcategory(\'' + jsCat + '\', \'' + jsSub + '\', event)" title="重命名">✎</span>' : '') +
                     extSubcatDelBtn +
                 '</span>' +
             '</button>';
@@ -3212,7 +3212,7 @@ function selectExtKbSubcategory(cat, sub, btnEl) {
     const subcatTitleEl = document.getElementById('extKbSubcatTitle');
     if (subcatTitleEl) subcatTitleEl.textContent = cat + ' / ' + sub;
     const subcatAddBtn = document.getElementById('extKbSubcatAddBtn');
-    if (subcatAddBtn) subcatAddBtn.style.display = '';
+    if (subcatAddBtn) subcatAddBtn.style.display = (userRole === 'admin') ? '' : 'none';
     // 第三列重置（未选三级子目录时禁用上传）
     const uploadBtn = document.getElementById('extKbFileUploadBtn');
     if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.style.opacity = '0.5'; uploadBtn.style.cursor = 'not-allowed'; }
@@ -3255,7 +3255,7 @@ async function loadExtKbSubsubcategories() {
             html += '<button class="kb-cat-item" onclick="selectExtKbSubsubcategory(\'' + jsCat + '\', \'' + jsSub + '\', \'' + jsSubsub + '\', this)">' +
                 '<span class="kb-cat-name">' + safeSubsub + '</span>' +
                 '<span class="kb-cat-actions" onclick="event.stopPropagation()">' +
-                    '<span class="kb-cat-edit" onclick="renameExtKbSubsubcategory(\'' + jsCat + '\', \'' + jsSub + '\', \'' + jsSubsub + '\', event)" title="重命名">✎</span>' +
+                    (userRole === 'admin' ? '<span class="kb-cat-edit" onclick="renameExtKbSubsubcategory(\'' + jsCat + '\', \'' + jsSub + '\', \'' + jsSubsub + '\', event)" title="重命名">✎</span>' : '') +
                     extSubsubDelBtn +
                 '</span>' +
             '</button>';
@@ -3277,7 +3277,13 @@ function selectExtKbSubsubcategory(cat, sub, subsub, btnEl) {
     const titleEl = document.getElementById('extKbFileTitle');
     if (titleEl) titleEl.textContent = cat + ' / ' + sub + ' / ' + subsub;
     const uploadBtn = document.getElementById('extKbFileUploadBtn');
-    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.style.opacity = ''; uploadBtn.style.cursor = ''; }
+    if (uploadBtn) {
+        if (userRole === 'admin') {
+            uploadBtn.disabled = false; uploadBtn.style.opacity = ''; uploadBtn.style.cursor = '';
+        } else {
+            uploadBtn.disabled = true; uploadBtn.style.opacity = '0'; uploadBtn.style.cursor = 'default'; uploadBtn.style.display = 'none';
+        }
+    }
     loadExtKbDocs();
 }
 

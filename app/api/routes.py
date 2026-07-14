@@ -3486,7 +3486,7 @@ async def get_agents(authorization: str = Header(None)):
 # ===== 外部知识库上传 =====
 
 @router.post("/external-kb/upload", summary="上传文档到全质知识库")
-async def external_kb_upload(file: UploadFile = File(...), category: str = Form(""), subcategory: str = Form(""), subsubcategory: str = Form(""), username: str = Depends(require_auth)):
+async def external_kb_upload(file: UploadFile = File(...), category: str = Form(""), subcategory: str = Form(""), subsubcategory: str = Form(""), admin: str = Depends(require_admin)):
     """上传文档到外部知识库（external_kb collection），按一级分类+二级+三级子目录存储"""
     allowed_ext = {".pdf", ".txt", ".md", ".docx", ".xlsx", ".xls", ".doc"}
     ext = os.path.splitext(file.filename)[1].lower()
