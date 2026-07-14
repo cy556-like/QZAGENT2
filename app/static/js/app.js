@@ -3804,8 +3804,7 @@ async function saveSurveyData() {
     const surveyUploadPage = document.getElementById('surveyUploadPage');
     if (surveyPage) surveyPage.style.display = 'none';
     if (surveyUploadPage) surveyUploadPage.style.display = 'none';
-    // 更新 history
-    history.pushState({page: 'kb'}, '');
+    // 更新 history（showKbPage 内部会 pushState，这里不重复）
     showToast('✓ 体系调研信息已保存', 2000);
     // 直接进入知识库界面
     // 确保 currentAgentId 有值
