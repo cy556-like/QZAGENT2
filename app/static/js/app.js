@@ -3799,16 +3799,29 @@ async function saveSurveyData() {
     } catch (e) {
         console.warn('[调研保存] 服务器保存失败，仅本地保存:', e);
     }
-    // 隐藏调研表单，直接进入对话（跳过文件上传页面）
+    // 隐藏调研表单，直接进入知识库界面（用户可在此上传文件，点返回对话进入聊天）
     const surveyPage = document.getElementById('surveyPage');
     const surveyUploadPage = document.getElementById('surveyUploadPage');
     if (surveyPage) surveyPage.style.display = 'none';
     if (surveyUploadPage) surveyUploadPage.style.display = 'none';
     // 更新 history
-    history.pushState({page: 'chat'}, '');
+    history.pushState({page: 'kb'}, '');
     showToast('✓ 体系调研信息已保存', 2000);
-    // 直接进入对话界面
-    await finishSurveyUpload();
+    // 直接进入知识库界面
+    // 确保 currentAgentId 有值
+    if (!currentAgentId) {
+        const lastAgentId = localStorage.getItem('lastAgentId');
+        if (lastAgentId && myAgents.some(a => a.id === lastAgentId)) {
+            currentAgentId = lastAgentId;
+        } else if (myAgents.length > 0) {
+            currentAgentId = myAgents[0].id;
+        }
+    }
+    // 如果还没有会话，先创建一个（这样从知识库返回对话时有会话可用）
+    if (!currentChatId) {
+        try { await createNewChat(); } catch(e) { console.warn('[调研] 创建会话失败:', e); }
+    }
+    showKbPage();
 }
 
 // 从上传页面进入对话
@@ -5224,7 +5237,7 @@ function showKbPage() {
     // Update title
     const agent = myAgents.find(a => a.id === currentAgentId);
     const agentName = agent ? agent.name : '智能体';
-    document.getElementById('kbPageTitle').textContent = '企业内部文件知识库';
+    document.getElementById('kbPageTitle').textContent = '企业内部文件（如果有请上传，如果没有请返回对话）';
     document.getElementById('kbPageDesc').textContent = '上传和管理' + agentName + '相关文档，系统将自动进行向量化处理';
     // [BUG FIX] 推入历史状态，让浏览器←按钮能回到聊天页
     history.pushState({page: 'kb'}, '');
