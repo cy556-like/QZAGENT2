@@ -314,6 +314,11 @@
                 </div>
             </div>
             <div class="kb-page-body kb-page-body-new">
+                <div class="kb-upload-progress" id="kbPageProgress" style="display:none;">
+                    <div class="kb-progress-file" id="kbProgressFileName">正在上传...</div>
+                    <div class="kb-progress-bar-bg"><div class="kb-progress-bar-fill" id="kbProgressBarFill"></div></div>
+                    <div class="kb-progress-status" id="kbProgressStatus">上传中...</div>
+                </div>
                 <div class="kb-layout kb-layout-three-col">
                     <!-- 第一列：一级分类 -->
                     <div class="kb-cat-col">
@@ -362,11 +367,6 @@
                     </div>
                 </div>
                 <input type="file" id="kbPageFileInput" accept=".pdf,.txt,.docx,.xlsx,.xls,.doc,.png,.jpg,.jpeg,.gif,.bmp,.webp" multiple onchange="onKbPageFileSelected(event)" style="display:none">
-                <div class="kb-upload-progress" id="kbPageProgress" style="display:none;">
-                    <div class="kb-progress-file" id="kbProgressFileName">正在上传...</div>
-                    <div class="kb-progress-bar-bg"><div class="kb-progress-bar-fill" id="kbProgressBarFill"></div></div>
-                    <div class="kb-progress-status" id="kbProgressStatus">上传中...</div>
-                </div>
             </div>
         </div>
         <div class="survey-page" id="surveyPage" style="display:none;">
@@ -585,6 +585,11 @@
                 </div>
             </div>
             <div class="kb-page-body kb-page-body-new">
+                <div class="kb-upload-progress" id="extKbProgress" style="display:none;">
+                    <div class="kb-progress-file" id="extKbProgressFileName">正在上传...</div>
+                    <div class="kb-progress-bar-bg"><div class="kb-progress-bar-fill" id="extKbProgressBarFill"></div></div>
+                    <div class="kb-progress-status" id="extKbProgressStatus">上传中...</div>
+                </div>
                 <div class="kb-layout kb-layout-three-col">
                     <!-- 第一列：分组（手风琴折叠）+ 子目录 -->
                     <div class="kb-cat-col kb-ext-cat-col">

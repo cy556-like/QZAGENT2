@@ -3635,11 +3635,22 @@ async function onExtKbFileSelected(event) {
     const total = files.length;
     let successCount = 0;
     let failCount = 0;
-    showToast(`正在上传 ${total} 个文件...`, 2000);
+    // 显示进度条
+    const progressEl = document.getElementById('extKbProgress');
+    const fileNameEl = document.getElementById('extKbProgressFileName');
+    const barFillEl = document.getElementById('extKbProgressBarFill');
+    const statusEl = document.getElementById('extKbProgressStatus');
+    if (progressEl) {
+        progressEl.style.display = '';
+        barFillEl.style.width = '0%';
+        barFillEl.style.background = '#15589B';
+    }
     try {
         for (let i = 0; i < total; i++) {
             const file = files[i];
-            showToast(`正在上传 (${i + 1}/${total}): ${file.name}`, 2000);
+            if (fileNameEl) fileNameEl.textContent = `(${i + 1}/${total}) ${file.name}`;
+            if (barFillEl) barFillEl.style.width = `${Math.round((i / total) * 100)}%`;
+            if (statusEl) statusEl.textContent = '上传中...';
             try {
                 const formData = new FormData();
                 formData.append('file', file);
@@ -3662,8 +3673,13 @@ async function onExtKbFileSelected(event) {
                 failCount++;
                 console.warn('[ExtKB上传] 异常:', file.name, e.message);
             }
+            if (barFillEl) barFillEl.style.width = `${Math.round(((i + 1) / total) * 100)}%`;
         }
-        // 汇总提示
+        // 完成
+        if (barFillEl) barFillEl.style.width = '100%';
+        if (fileNameEl) fileNameEl.textContent = `完成：成功 ${successCount} 个${failCount > 0 ? '，失败 ' + failCount + ' 个' : ''}`;
+        if (statusEl) statusEl.textContent = failCount === 0 ? '✓ 全部成功' : '⚠️ 部分失败';
+        if (barFillEl) barFillEl.style.background = failCount === 0 ? '#4caf50' : '#ff9800';
         if (failCount === 0) {
             showToast(`✓ 全部上传成功（共 ${successCount} 个文件）`, 3000);
         } else {
@@ -3673,6 +3689,7 @@ async function onExtKbFileSelected(event) {
     } catch (e) {
         showToast('上传失败: ' + e.message, 3000);
     }
+    setTimeout(() => { if (progressEl) progressEl.style.display = 'none'; }, 3000);
     event.target.value = '';
 }
 
