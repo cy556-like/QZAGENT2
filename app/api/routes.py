@@ -3590,14 +3590,8 @@ if _SCSCRIPTS_DIR not in _sys_top.path:
 
 @router.post("/generate/manual", summary="一键生成质量手册（AI 驱动，SSE 流式进度）")
 async def generate_manual_api(request: Request, username: str = Depends(require_auth)):
-    """AI 驱动生成质量手册，SSE 流式推送每一步进度。
-    响应 Content-Type: text/event-stream
-    每个事件 data: 是 JSON 字符串，格式：
-      {"type":"progress","step":"模板查找","message":"...","detail":"..."}
-      {"type":"modification","mod":{"type":"global_replace","old":"...","new":"...","n":3,"reason":"..."}}
-      {"type":"success","filename":"...","download_url":"...","stats":{...},"modifications_count":N}
-      {"type":"error","message":"..."}
-    """
+    """AI 驱动生成质量手册（支持多模板批量生成），SSE 流式推送每一步进度。
+    用户可能在企业内部文件上传多个手册分册，每个都会生成一个文件。"""
     import asyncio
     import re as _re
     import sys as _sys
@@ -3614,408 +3608,181 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
     if not survey_data:
         raise HTTPException(status_code=400, detail="未提供体系调研数据")
 
-    # 定位 SCskill 模块
     if not os.path.exists(os.path.join(_SCSCRIPTS_DIR, "generate_manual.py")):
         raise HTTPException(status_code=500, detail=f"SCskill 模块未找到: {_SCSCRIPTS_DIR}")
 
-    # 生成手册保存到 data/export/{session_id}/ 子目录
-    # 这样删除对话时会自动清理对应的导出文件
     export_dir = os.path.join(settings.DATA_DIR, "export")
-    # 从 body 获取 session_id（如果有）
     session_id_for_export = body.get("session_id", "")
     if session_id_for_export:
         export_dir = os.path.join(export_dir, session_id_for_export)
     os.makedirs(export_dir, exist_ok=True)
 
     current_model = get_current_model() or "glm-5.2"
-    logger.info(f"[SCskill] AI 生成质量手册: user={username}, model={current_model}")
+    logger.info(f"[SCskill] AI 生成质量手册（批量）: user={username}, model={current_model}")
 
     async def sse_event_stream():
-        """SSE 事件流生成器"""
         async def send(evt: dict):
             return f"data: {_json.dumps(evt, ensure_ascii=False)}\n\n"
 
         try:
-            # 步骤 1：分析调研数据
-            yield await send({
-                "type": "progress",
-                "step": "分析调研数据",
-                "message": f"正在分析体系调研数据（公司：{survey_data.get('sv_company_name','未填写')}）...",
-                "progress": 5
-            })
+            yield await send({"type": "progress", "step": "分析调研数据", "message": f"正在分析体系调研数据（公司：{survey_data.get('sv_company_name','未填写')}）...", "progress": 5})
             await asyncio.sleep(0.1)
 
-            # 步骤 2：import SCskill 模块
             if 'generate_manual' in _sys.modules:
                 gm = importlib.reload(_sys.modules['generate_manual'])
             else:
                 gm = importlib.import_module('generate_manual')
 
-            # 步骤 3：查找模板
-            yield await send({
-                "type": "progress",
-                "step": "查找模板",
-                "message": "正在查找模板文件（企业内部文件→全质知识库→内置模板）...",
-                "progress": 10
-            })
+            yield await send({"type": "progress", "step": "查找模板", "message": "正在查找模板文件（企业内部文件→全质知识库）...", "progress": 10})
             await asyncio.sleep(0.1)
-            # 三级查找：企业内部文件知识库 → 全质知识库 → 内置模板
-            # [用户隔离] 企业内部文件按用户隔离
             user_agent_id = _user_agent_id(current_agent_id, username)
-            template_path, need_convert, template_source = gm.find_template(agent_id=user_agent_id, documents_dir=settings.DOCUMENTS_DIR)
-            if template_path is None:
-                yield await send({
-                    "type": "error",
-                    "message": "未找到模板文件。请在企业内部文件知识库[手册]分类或全质知识库[体系文件/手册/全质手册模板]下上传 .docx/.doc 模板。"
-                })
+            all_templates = gm.find_all_templates(agent_id=user_agent_id, documents_dir=settings.DOCUMENTS_DIR)
+            if not all_templates:
+                yield await send({"type": "error", "message": "未找到模板文件。请在企业内部文件知识库[手册]分类或全质知识库[体系文件/手册/全质手册模板]下上传 .docx/.doc 模板。"})
                 return
-            # 显示模板来源
-            source_label = {'internal': '企业内部文件知识库', 'external': '全质知识库', 'builtin': '内置模板'}.get(template_source, '未知')
-            yield await send({
-                "type": "progress",
-                "step": "已找到模板",
-                "message": f"模板来源：{source_label}（{os.path.basename(str(template_path))}）",
-                "progress": 12
-            })
 
-            # 步骤 4：.doc 转 .docx（如需要）
-            actual_template = template_path
-            if need_convert:
-                yield await send({
-                    "type": "progress",
-                    "step": "转换模板格式",
-                    "message": f"模板为 .doc 格式，正在转换为 .docx ...",
-                    "progress": 15
-                })
-                converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
-                if not converted:
-                    yield await send({
-                        "type": "error",
-                        "message": ".doc 模板转换失败，请安装 LibreOffice 或上传 .docx 模板"
-                    })
-                    return
-                actual_template = converted
+            total_templates = len(all_templates)
+            yield await send({"type": "progress", "step": "已找到模板", "message": f"共找到 {total_templates} 个手册模板，将逐个生成", "progress": 12})
+            for t in all_templates:
+                source_label = {'internal': '企业内部文件', 'external': '全质知识库'}.get(t['source'], '未知')
+                yield await send({"type": "progress", "step": "模板列表", "message": f"  [{source_label}] {t['filename']}", "progress": 12})
 
-            # 步骤 5：加载模板
-            yield await send({
-                "type": "progress",
-                "step": "加载模板",
-                "message": f"正在加载模板文件: {os.path.basename(str(actual_template))} ...",
-                "progress": 20
-            })
-            await asyncio.sleep(0.1)
-            from docx import Document
-            doc = await asyncio.to_thread(Document, str(actual_template))
-            para_count = len(doc.paragraphs)
-            table_count = len(doc.tables)
-
-            # 步骤 6：提取模板结构概览
-            yield await send({
-                "type": "progress",
-                "step": "提取模板结构",
-                "message": f"正在提取模板结构（{para_count} 段，{table_count} 表）...",
-                "progress": 30
-            })
-            overview = await asyncio.to_thread(gm.extract_template_overview, doc)
-            overview_text = gm.format_overview_for_llm(overview)
             survey_text = gm.format_survey_for_llm(survey_data)
-            await asyncio.sleep(0.1)
-
-            # 步骤 7：构造提示词
-            yield await send({
-                "type": "progress",
-                "step": "构造 AI 提示词",
-                "message": f"已提取 {len(overview['paragraphs'])} 个非空段落，正在构造 AI 分析提示词...",
-                "progress": 40
-            })
-            system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text)
-            await asyncio.sleep(0.1)
-
-            # 步骤 8：调用 LLM（流式接收，每条修改立即应用+推送）
-            yield await send({
-                "type": "progress",
-                "step": "调用 AI 模型",
-                "message": f"正在调用 AI 模型 [{current_model}] 分析模板并生成修改方案...\n（AI 会逐条输出修改方案，每条都会实时显示在下方）",
-                "progress": 50
-            })
-            # 显示模板来源信息（让用户知道基于哪个模板生成）
-            template_filename = os.path.basename(str(template_path))
-            if template_source == 'internal':
-                # 计算相对路径（从 documents 目录开始）
-                try:
-                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
-                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + _user_agent_id(current_agent_id, username) + '/', '企业内部文件/')
-                except Exception:
-                    template_path_display = '企业内部文件/' + template_filename
-                yield await send({
-                    "type": "progress",
-                    "step": "模板来源",
-                    "message": f"基于【企业内部文件】知识库上传的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}",
-                    "progress": 52
-                })
-            elif template_source == 'external':
-                try:
-                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
-                    template_path_display = rel_path.replace('\\', '/').replace('external_kb/', '全质知识库/')
-                except Exception:
-                    template_path_display = '全质知识库/体系文件/手册/全质手册模板/' + template_filename
-                yield await send({
-                    "type": "progress",
-                    "step": "模板来源",
-                    "message": f"基于【全质知识库】的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}",
-                    "progress": 52
-                })
-            else:
-                yield await send({
-                    "type": "progress",
-                    "step": "模板来源",
-                    "message": f"基于【内置模板】生成\n模板文件：{template_filename}",
-                    "progress": 52
-                })
-            # 提示用户即将开始接收修改
-            yield await send({
-                "type": "progress",
-                "step": "接收 AI 修改方案",
-                "message": "正在等待 AI 输出修改方案...",
-                "progress": 55
-            })
-            # 在修改日志区显示头部
-            yield await send({
-                "type": "modifications_start",
-                "message": "AI 正在逐条输出修改方案（实时应用中）："
-            })
-
-            llm = create_llm(deep_think=True)
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt),
-            ]
-
-            # 用 astream 流式接收，每解析出一条 NDJSON 就立即应用+推送
-            stats = {
-                'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
-                'header_replace': 0, 'unknown': 0, 'failed': 0,
-            }
-            modifications_count = 0
-            buffer = ''
-            llm_total_chars = 0
-            last_recv_time = time.time()
-            try:
-                async for chunk in llm.astream(messages):
-                    last_recv_time = time.time()
-                    if not chunk:
-                        continue
-                    if hasattr(chunk, 'content'):
-                        token = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
-                    else:
-                        token = str(chunk)
-                    if not token:
-                        continue
-                    llm_total_chars += len(token)
-                    buffer += token
-
-                    # 按换行符分割，处理完整的行
-                    while '\n' in buffer:
-                        line, buffer = buffer.split('\n', 1)
-                        line = line.strip()
-                        if not line:
-                            continue
-                        if line == '===END===':
-                            buffer = ''
-                            break
-                        # 尝试解析这一行为 NDJSON
-                        mod = gm.parse_ndjson_line(line)
-                        if mod is None:
-                            continue
-
-                        # 解析成功，立即应用到 docx 并推送给前端
-                        modifications_count += 1
-                        progress = 55 + min(int(modifications_count * 1.5), 40)  # 55-95
-                        try:
-                            mod_type = mod.get('type', '')
-                            reason = (mod.get('reason', '') or '')[:80]
-
-                            if mod_type == 'paragraph':
-                                idx = int(mod.get('index', -1))
-                                new_text = mod.get('new_text', '')
-                                ok = gm.apply_paragraph_replace(doc, idx, new_text)
-                                if ok:
-                                    stats['paragraph'] += 1
-                                    yield await send({
-                                        "type": "modification",
-                                        "mod_type": "paragraph",
-                                        "location": f"段落 P{idx}",
-                                        "reason": reason,
-                                        "preview": (new_text or '')[:80],
-                                        "progress": progress,
-                                        "index": modifications_count
-                                    })
-                                else:
-                                    stats['failed'] += 1
-                            elif mod_type == 'table_cell':
-                                ti = int(mod.get('table', -1))
-                                ri = int(mod.get('row', -1))
-                                ci = int(mod.get('col', -1))
-                                new_text = mod.get('new_text', '')
-                                ok = gm.apply_table_cell_replace(doc, ti, ri, ci, new_text)
-                                if ok:
-                                    stats['table_cell'] += 1
-                                    yield await send({
-                                        "type": "modification",
-                                        "mod_type": "table_cell",
-                                        "location": f"表格 T{ti} 第{ri+1}行第{ci+1}列",
-                                        "reason": reason,
-                                        "preview": (new_text or '')[:80],
-                                        "progress": progress,
-                                        "index": modifications_count
-                                    })
-                                else:
-                                    stats['failed'] += 1
-                            elif mod_type == 'global_replace':
-                                old = mod.get('old', '')
-                                new = mod.get('new', '')
-                                n = gm.apply_global_replace(doc, old, new)
-                                stats['global_replace'] += n
-                                yield await send({
-                                    "type": "modification",
-                                    "mod_type": "global_replace",
-                                    "location": "全文",
-                                    "reason": reason,
-                                    "preview": f"'{old}' → '{new}'（{n} 处）",
-                                    "progress": progress,
-                                    "index": modifications_count
-                                })
-                            elif mod_type == 'header_replace':
-                                old = mod.get('old', '')
-                                new = mod.get('new', '')
-                                n = gm.apply_header_replace(doc, old, new)
-                                stats['header_replace'] += n
-                                yield await send({
-                                    "type": "modification",
-                                    "mod_type": "header_replace",
-                                    "location": "页眉/页脚",
-                                    "reason": reason,
-                                    "preview": f"'{old}' → '{new}'（{n} 处）",
-                                    "progress": progress,
-                                    "index": modifications_count
-                                })
-                            else:
-                                stats['unknown'] += 1
-                        except Exception as e:
-                            stats['failed'] += 1
-                            logger.warning(f"[SCskill] 修改 #{modifications_count} 失败: {e}")
-
-                    # 检查是否超时（基于 last_recv_time 静默超时，不强制中断）
-                    # 这里不主动中断，让 langchain 内部超时机制处理
-            except Exception as stream_err:
-                err_msg = str(stream_err)
-                if 'timeout' in err_msg.lower() or 'timed out' in err_msg.lower():
-                    yield await send({
-                        "type": "error",
-                        "message": "AI 模型调用超时，请重试或切换更快的模型"
-                    })
-                    return
-                logger.exception(f"[SCskill] LLM 流式接收异常: {stream_err}")
-                # 不直接 return，继续往下走（可能已经收到部分修改）
-            logger.info(f"[SCskill] LLM 流式接收完成，共 {llm_total_chars} 字符，{modifications_count} 个修改方案")
-
-            if modifications_count == 0:
-                yield await send({
-                    "type": "error",
-                    "message": "AI 未能生成有效的修改方案，请重试或更换模型"
-                })
-                return
-
-            # 步骤 9：保存输出
-            yield await send({
-                "type": "progress",
-                "step": "保存文件",
-                "message": f"AI 已输出 {modifications_count} 个修改方案全部应用完成，正在保存文件...",
-                "progress": 97
-            })
             company_name = (survey_data.get('sv_company_name') or '企业').strip()
             safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
             today_str = datetime.now().strftime("%Y%m%d")
-            filename = f"质量管理手册_{safe_name}_{today_str}.docx"
-            output_path = os.path.join(export_dir, filename)
-            # 删除 LibreOffice 转换时自动添加的偶数页页眉页脚（避免空白页）
-            gm.remove_even_page_headers_footers(doc)
-            await asyncio.to_thread(doc.save, output_path)
-            logger.info(f"[SCskill] 手册已生成: {output_path}")
+            generated_files = []
+            failed_files = []
 
-            # 完成
-            download_url = f"/api/v1/documents/export-download/{filename}"
-            # 构造模板来源显示文本
-            template_filename = os.path.basename(str(template_path))
-            if template_source == 'internal':
+            for ti, tmpl in enumerate(all_templates):
+                template_path = tmpl['path']
+                need_convert = tmpl['need_convert']
+                template_source = tmpl['source']
+                template_filename = tmpl['filename']
+                source_label = {'internal': '企业内部文件', 'external': '全质知识库'}.get(template_source, '未知')
+                base_progress = int(15 + (ti / total_templates) * 80)
+                end_progress = int(15 + ((ti + 1) / total_templates) * 80)
+
+                yield await send({"type": "progress", "step": f"处理第 {ti+1}/{total_templates} 个：{template_filename}", "message": f"正在处理 [{source_label}] {template_filename}", "progress": base_progress})
+
                 try:
-                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
-                    template_path_display = rel_path.replace('\\', '/').replace('agent_' + _user_agent_id(current_agent_id, username) + '/', '企业内部文件/')
-                except Exception:
-                    template_path_display = '企业内部文件/' + template_filename
-                template_source_text = f"基于【企业内部文件】知识库上传的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}"
-            elif template_source == 'external':
-                try:
-                    rel_path = os.path.relpath(str(template_path), settings.DOCUMENTS_DIR)
-                    template_path_display = rel_path.replace('\\', '/').replace('external_kb/', '全质知识库/')
-                except Exception:
-                    template_path_display = '全质知识库/体系文件/手册/全质手册模板/' + template_filename
-                template_source_text = f"基于【全质知识库】的模板生成\n模板路径：{template_path_display}\n模板文件：{template_filename}"
-            else:
-                template_source_text = f"基于【内置模板】生成\n模板文件：{template_filename}"
-            # [Bug 修复] 把对话记录保存到会话历史，否则重启后前端看不到
-            # 同时把文件下载信息嵌入消息，前端加载历史时能重新渲染下载按钮
-            # 注意：用户点按钮不是发消息，不保存 HumanMessage，只保存 AI 回复
+                    actual_template = template_path
+                    if need_convert:
+                        converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
+                        if not converted:
+                            failed_files.append({"filename": template_filename, "reason": "doc转换失败"})
+                            continue
+                        actual_template = converted
+
+                    from docx import Document
+                    doc = await asyncio.to_thread(Document, str(actual_template))
+                    overview = await asyncio.to_thread(gm.extract_template_overview, doc)
+                    overview_text = gm.format_overview_for_llm(overview)
+                    system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text)
+
+                    yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"正在调用 AI 分析...", "progress": base_progress + 10})
+
+                    llm = create_llm(deep_think=True)
+                    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+                    stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0, 'header_replace': 0, 'unknown': 0, 'failed': 0}
+                    modifications_count = 0
+                    buffer = ''
+                    try:
+                        async for chunk in llm.astream(messages):
+                            if not chunk: continue
+                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            if not token: continue
+                            buffer += token
+                            while '\n' in buffer:
+                                line, buffer = buffer.split('\n', 1)
+                                line = line.strip()
+                                if not line or line == '===END===': continue
+                                if line.startswith('```'): line = line.lstrip('`').replace('json', '', 1).strip()
+                                if line.endswith('```'): line = line[:-3].strip()
+                                if not line.startswith('{') or not line.endswith('}'): continue
+                                try: mod = _json.loads(line)
+                                except: 
+                                    try: mod = _json.loads(_re.sub(r',\s*([}\]])', r'\1', line))
+                                    except: continue
+                                modifications_count += 1
+                                mod_type = mod.get('type', '')
+                                reason = (mod.get('reason', '') or '')[:80]
+                                progress = int(base_progress + 10 + (modifications_count % 20) * 2)
+                                try:
+                                    if mod_type == 'paragraph':
+                                        idx = int(mod.get('index', -1)); new_text = mod.get('new_text', '')
+                                        if gm.apply_paragraph_replace(doc, idx, new_text): stats['paragraph'] += 1
+                                        else: stats['failed'] += 1
+                                        yield await send({"type": "modification", "mod_type": "paragraph", "location": f"P{idx}", "reason": reason, "preview": (new_text[:60] + '...' if len(new_text) > 60 else new_text), "progress": progress, "index": modifications_count})
+                                    elif mod_type == 'table_cell':
+                                        ti2 = int(mod.get('table', -1)); ri = int(mod.get('row', -1)); ci2 = int(mod.get('col', -1)); new_text = mod.get('new_text', '')
+                                        if gm.apply_table_cell_replace(doc, ti2, ri, ci2, new_text): stats['table_cell'] += 1
+                                        else: stats['failed'] += 1
+                                        yield await send({"type": "modification", "mod_type": "table_cell", "location": f"T{ti2}.R{ri}.C{ci2}", "reason": reason, "preview": (new_text[:60] + '...' if len(new_text) > 60 else new_text), "progress": progress, "index": modifications_count})
+                                    elif mod_type == 'global_replace':
+                                        old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_global_replace(doc, old, new)
+                                        stats['global_replace'] += n
+                                        yield await send({"type": "modification", "mod_type": "global_replace", "location": "全文", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                    elif mod_type == 'header_replace':
+                                        old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_header_replace(doc, old, new)
+                                        stats['header_replace'] += n
+                                        yield await send({"type": "modification", "mod_type": "header_replace", "location": "页眉/页脚", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                    else: stats['unknown'] += 1
+                                except: stats['failed'] += 1
+                    except Exception as stream_err:
+                        logger.warning(f"[SCskill] {template_filename} LLM异常: {stream_err}")
+
+                    if modifications_count == 0:
+                        failed_files.append({"filename": template_filename, "reason": "AI未生成修改方案"})
+                        continue
+
+                    tmpl_base = os.path.splitext(template_filename)[0]
+                    tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
+                    tmpl_clean = _re.sub(r'^[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_clean)
+                    tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
+                    tmpl_clean = tmpl_clean.strip() or '质量管理手册'
+                    safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
+                    out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                    output_path = os.path.join(export_dir, out_filename)
+                    gm.remove_even_page_headers_footers(doc)
+                    await asyncio.to_thread(doc.save, output_path)
+                    logger.info(f"[SCskill] 手册已生成: {output_path}")
+
+                    download_url = f"/api/v1/documents/export-download/{out_filename}"
+                    generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "stats": stats})
+                    yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress})
+
+                except Exception as e:
+                    logger.exception(f"[SCskill] {template_filename} 生成异常: {e}")
+                    failed_files.append({"filename": template_filename, "reason": str(e)[:100]})
+
+            # 保存对话记录
             try:
                 from app.memory.manager import get_session_history, flush_session
                 from langchain_core.messages import AIMessage as _AIMsg2
                 history = get_session_history(session_id_for_export)
-                # AI 消息：记录生成的手册信息 + 修改详情
-                ai_msg = f"已生成质量手册：{filename}（{modifications_count} 处修改）\n{template_source_text}"
-                # 嵌入下载信息（前端检测此标记重新渲染下载按钮）
-                download_info = {
-                    "type": "manual_file",
-                    "files": [{"filename": filename, "download_url": download_url,
-                                "display_name": filename, "modifications_count": modifications_count}]
-                }
-                import json as _json_for_msg2
-                # [Bug 修复] 标记放在消息开头，防止消息超 8000 字被截断时标记丢失
-                ai_msg = f"<!--DOWNLOAD_INFO:{_json_for_msg2.dumps(download_info, ensure_ascii=False)}-->\n\n" + ai_msg
+                if generated_files:
+                    file_list = "\n".join([f"- {f.get('display_name', f.get('filename',''))}（{f.get('modifications_count',0)} 处修改）" for f in generated_files])
+                    ai_msg = f"已生成 {len(generated_files)} 个质量手册：\n{file_list}"
+                    download_info = {"type": "manual_files", "files": [{"filename": f.get("filename",""), "download_url": f.get("download_url",""), "display_name": f.get("display_name", f.get("filename","")), "modifications_count": f.get("modifications_count", 0)} for f in generated_files]}
+                    ai_msg = f"<!--DOWNLOAD_INFO:{_json.dumps(download_info, ensure_ascii=False)}-->\n\n" + ai_msg
+                else:
+                    ai_msg = "生成失败，未产生任何手册文件。"
                 history.add_message(_AIMsg2(content=ai_msg))
                 parts = session_id_for_export.split("_", 1)
-                if len(parts) == 2:
-                    update_chat_time(parts[0], session_id_for_export)
+                if len(parts) == 2: update_chat_time(parts[0], session_id_for_export)
                 flush_session(session_id_for_export)
-                logger.info(f"[SCskill] 对话记录已保存到会话历史: {session_id_for_export}")
             except Exception as save_err:
                 logger.warning(f"[SCskill] 保存对话记录失败: {save_err}")
-            yield await send({
-                "type": "success",
-                "filename": filename,
-                "download_url": download_url,
-                "modifications_count": modifications_count,
-                "stats": stats,
-                "model_used": current_model,
-                "template_source_text": template_source_text,
-                "progress": 100
-            })
+
+            yield await send({"type": "success", "total_files": len(generated_files), "failed_count": len(failed_files), "files": generated_files, "failed_files": failed_files, "model_used": current_model, "progress": 100})
 
         except Exception as e:
             logger.exception(f"[SCskill] 生成手册异常: {e}")
-            yield await send({
-                "type": "error",
-                "message": f"生成失败: {str(e)}"
-            })
+            yield await send({"type": "error", "message": f"生成失败: {str(e)}"})
 
-    return StreamingResponse(
-        sse_event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # Nginx 不缓冲，实时推送
-            "Connection": "keep-alive",
-        }
-    )
+    return StreamingResponse(sse_event_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
 
 
 # ===== 一键生成程序文件（CXskill + AI 驱动）=====
