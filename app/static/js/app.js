@@ -2298,7 +2298,7 @@ async function downloadExportFile(url) {
     try {
         // [修复 v2] URL 完整性校验：防止流式渲染时点击到残缺 URL
         // 合法的导出 URL 必须以 /api/v1/documents/export-download/ 开头，且以文件扩展名结尾
-        const validUrlPattern = /^\/api\/v1\/documents\/export-download\/[^]+\.(docx|xlsx|pdf|txt)$/i;
+        const validUrlPattern = /^\/api\/v1\/documents\/export-download\/[^]+\.(docx|xlsx|pdf|txt)(\?[^]*)?$/i;
         if (!validUrlPattern.test(url)) {
             console.warn('下载URL不完整或格式错误:', url);
             showToast('文件链接尚未生成完毕，请稍候 1-2 秒后再试', 3000);
@@ -2313,8 +2313,9 @@ async function downloadExportFile(url) {
         }
         // 从Content-Disposition提取文件名
         const disposition = response.headers.get('Content-Disposition');
-        // 根据URL中的扩展名决定默认文件名
-        const urlExt = url.split('.').pop().toLowerCase();
+        // 根据URL中的扩展名决定默认文件名（去除 ?sid=xxx 等查询参数后再提取）
+        const urlNoQuery = url.split('?')[0];
+        const urlExt = urlNoQuery.split('.').pop().toLowerCase();
         const defaultNames = { docx: '导出文档.docx', xlsx: '导出表格.xlsx', pdf: '导出文档.pdf', txt: '导出文本.txt' };
         let filename = defaultNames[urlExt] || '导出文档.docx';
         if (disposition) {
@@ -2328,7 +2329,7 @@ async function downloadExportFile(url) {
         }
         // 从URL提取文件名（兜底：默认文件名未被服务端覆盖时才使用URL中的文件名）
         if (filename === defaultNames[urlExt] || filename === '导出文档.docx') {
-            const urlParts = url.split('/');
+            const urlParts = urlNoQuery.split('/');
             const lastPart = urlParts[urlParts.length - 1];
             if (lastPart) { try { filename = decodeURIComponent(lastPart); } catch(e) { filename = lastPart; } }
         }

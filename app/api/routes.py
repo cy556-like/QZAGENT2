@@ -471,6 +471,8 @@ class ModifyDocumentRequest(BaseModel):
 
     agent_id: str = None  # 智能体ID，用于知识库隔离
 
+    session_id: str = ""  # [Bug 修复] 会话ID，用于导出文件按会话隔离目录
+
 
 
 
@@ -484,6 +486,8 @@ class ExportDocumentRequest(BaseModel):
     filename: str = ""  # 输出文件名（含扩展名），为空则自动生成
 
     title: str = ""  # 文档标题，为空则使用filename
+
+    session_id: str = ""  # [Bug 修复] 会话ID，用于导出文件按会话隔离目录
 
 
 
@@ -2013,13 +2017,13 @@ async def modify_document_api(filename: str, req: ModifyDocumentRequest, usernam
 
             docx_filename = filename.rsplit('.', 1)[0] + '.docx'
 
-            docx_result = export_document_as_docx(final_content, docx_filename)
+            docx_result = export_document_as_docx(final_content, docx_filename, session_id=req.session_id or "")
 
             if docx_result["status"] == "success":
 
                 actual_docx_filename = docx_result.get('filename', docx_filename)
 
-                response_data["download_url"] = f"/api/v1/documents/export-download/{actual_docx_filename}"
+                response_data["download_url"] = f"/api/v1/documents/export-download/{actual_docx_filename}?sid={req.session_id or ''}"
 
                 response_data["docx_filename"] = actual_docx_filename
 
@@ -2163,7 +2167,7 @@ async def export_document_api(req: ExportDocumentRequest):
 
 
 
-        result = export_document_as_docx(req.content, filename, title=req.title)
+        result = export_document_as_docx(req.content, filename, title=req.title, session_id=req.session_id or "")
 
         if result["status"] == "success":
 
@@ -2175,7 +2179,7 @@ async def export_document_api(req: ExportDocumentRequest):
 
                 "filename": actual_filename,
 
-                "download_url": f"/api/v1/documents/export-download/{actual_filename}",
+                "download_url": f"/api/v1/documents/export-download/{actual_filename}?sid={req.session_id or ''}",
 
                 "message": result["message"],
 
@@ -2202,6 +2206,8 @@ class ExportXlsxRequest(BaseModel):
     filename: str = ""  # 输出文件名（含扩展名），为空则自动生成
 
     title: str = ""  # 文档标题/工作表名称，为空则使用filename
+
+    session_id: str = ""  # [Bug 修复] 会话ID，用于导出文件按会话隔离目录
 
 
 
@@ -2233,7 +2239,7 @@ async def export_xlsx_api(req: ExportXlsxRequest):
 
 
 
-        result = export_document_as_xlsx(req.content, filename, title=req.title)
+        result = export_document_as_xlsx(req.content, filename, title=req.title, session_id=req.session_id or "")
 
         if result["status"] == "success":
 
@@ -2245,7 +2251,7 @@ async def export_xlsx_api(req: ExportXlsxRequest):
 
                 "filename": actual_filename,
 
-                "download_url": f"/api/v1/documents/export-download/{actual_filename}",
+                "download_url": f"/api/v1/documents/export-download/{actual_filename}?sid={req.session_id or ''}",
 
                 "message": result["message"],
 
@@ -2265,7 +2271,7 @@ async def export_xlsx_api(req: ExportXlsxRequest):
 
 @router.get("/documents/export-download/{filename}", summary="下载AI导出的文档")
 
-async def download_export_document(filename: str):
+async def download_export_document(filename: str, sid: str = None):
 
     """
 
@@ -2274,6 +2280,8 @@ async def download_export_document(filename: str):
     文件保存在 data/export/{session_id}/ 目录中
 
     支持会话子目录查找 + 兼容旧版平铺目录
+
+    [Bug 修复] 新增 sid 查询参数，优先在指定会话目录中查找，避免同名文件下载到其他会话的版本
 
     """
 
@@ -2295,15 +2303,29 @@ async def download_export_document(filename: str):
 
 
 
+    # sid 也做安全检查（防止路径穿越）
+    safe_sid = (sid or '').replace('/', '_').replace('\\', '_').replace('..', '_') if sid else ''
+
     export_root = _get_export_dir()  # export 根目录
 
     file_path = None
 
 
 
-    # 1. 先在会话子目录中查找（新版本：data/export/{session_id}/xxx.docx）
+    # 0. [Bug 修复] 优先在 sid 指定的会话目录中查找，避免同名文件下载到其他会话的版本
+    if safe_sid:
+        candidate_dir = os.path.join(export_root, safe_sid)
+        if os.path.isdir(candidate_dir):
+            candidate = os.path.join(candidate_dir, safe_filename)
+            if os.path.exists(candidate):
+                file_path = candidate
+                logger.info(f"[导出下载] 在指定会话目录 {safe_sid}/ 中找到文件: {safe_filename}")
 
-    if os.path.exists(export_root):
+
+
+    # 1. 如果 sid 没找到，遍历所有会话子目录查找（兼容旧版无 sid 的链接）
+
+    if file_path is None and os.path.exists(export_root):
 
         for item in os.listdir(export_root):
 
@@ -3754,7 +3776,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     await asyncio.to_thread(doc.save, output_path)
                     logger.info(f"[SCskill] 手册已生成: {output_path}")
 
-                    download_url = f"/api/v1/documents/export-download/{out_filename}"
+                    download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
                     generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "stats": stats})
                     yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress})
 
@@ -4245,7 +4267,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     await asyncio.to_thread(doc.save, output_path)
                     logger.info(f"[CXskill] 程序文件已生成: {output_path}")
 
-                    download_url = f"/api/v1/documents/export-download/{out_filename}"
+                    download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
                     template_source_text = f"基于【{source_label}】模板生成\n部门：{dept}\n模板：{filename_tmpl}\n修改：{modifications_count} 处"
 
                     generated_files.append({
