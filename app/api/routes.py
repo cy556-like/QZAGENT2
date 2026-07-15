@@ -4128,8 +4128,8 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     overview = await asyncio.to_thread(cx.extract_template_overview, doc)
                     overview_text = cx.format_overview_for_llm(overview)
 
-                    # 构造提示词
-                    system_prompt, user_prompt = cx.build_llm_prompt(overview_text, survey_text, filename_tmpl)
+                    # 构造提示词（传入 survey_data 用于计算实施日期）
+                    system_prompt, user_prompt = cx.build_llm_prompt(overview_text, survey_text, filename_tmpl, survey_data)
 
                     # AI 修改
                     llm = create_llm(deep_think=True, model_override=current_model)
