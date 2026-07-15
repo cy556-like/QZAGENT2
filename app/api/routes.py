@@ -3774,6 +3774,13 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     output_path = os.path.join(export_dir, out_filename)
                     gm.remove_even_page_headers_footers(doc)
                     await asyncio.to_thread(doc.save, output_path)
+                    # 清理 doc 转换产生的临时目录
+                    if need_convert and converted:
+                        try:
+                            import shutil
+                            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+                        except Exception:
+                            pass
                     logger.info(f"[SCskill] 手册已生成: {output_path}")
 
                     download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
@@ -4265,6 +4272,13 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     # 删除 LibreOffice 转换时自动添加的偶数页页眉页脚（避免空白页）
                     cx.remove_even_page_headers_footers(doc)
                     await asyncio.to_thread(doc.save, output_path)
+                    # 清理 doc 转换产生的临时目录
+                    if tmpl.get('need_convert') and converted:
+                        try:
+                            import shutil
+                            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+                        except Exception:
+                            pass
                     logger.info(f"[CXskill] 程序文件已生成: {output_path}")
 
                     download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"

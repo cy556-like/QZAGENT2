@@ -289,7 +289,7 @@ async function syncAgentsFromServer(force = false) {
 async function rebuildChatIdsFromServer() {
     if (!currentUser || !authToken) return;
     try {
-        const resp = await fetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}`, { headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}`, { headers: apiHeaders() });
         const data = await resp.json();
         console.log('[rebuildChatIds] server chats:', data);
         if (data.success && data.chats) {
@@ -363,7 +363,7 @@ function deleteAgent(agentId) {
     if (!confirm(`确定删除智能体「${agent.name}」？相关对话和知识库也将被删除。`)) return;
     
     // 先删除服务器端的知识库
-    fetch(`/api/v1/agents/${encodeURIComponent(agentId)}/knowledge`, { method: 'DELETE', headers: apiHeaders() })
+    apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/knowledge`, { method: 'DELETE', headers: apiHeaders() })
         .then(r => r.json())
         .then(data => console.log('[KB删除]', data))
         .catch(e => console.warn('[KB删除失败]', e));
@@ -501,7 +501,7 @@ async function createNewChatForAgent(agentId) {
         const chatTitle = agent ? agent.name : '新对话';
         console.log('[新建对话] 发送POST请求, title=', chatTitle, 'agent_id=', agentId);
 
-        const resp = await fetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}&title=${encodeURIComponent(chatTitle)}&mode=agent&agent_id=${encodeURIComponent(agentId)}`, {
+        const resp = await apiFetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}&title=${encodeURIComponent(chatTitle)}&mode=agent&agent_id=${encodeURIComponent(agentId)}`, {
             method: 'POST',
             headers: apiHeaders()
         });
@@ -997,7 +997,7 @@ async function loadModels() {
             select.value = 'auto-model';
             // 同步到后端，确保后端 LLM_MODEL 也是 auto-model（避免下次刷新又变回旧值）
             try {
-                await fetch('/api/v1/models/set', {
+                await apiFetch('/api/v1/models/set', {
                     method: 'POST',
                     headers: apiHeaders(),
                     body: JSON.stringify({ model_id: 'auto-model' })
@@ -1014,7 +1014,7 @@ async function loadModels() {
 async function switchModel() {
     const modelId = document.getElementById('modelSelect').value;
     try {
-        const resp = await fetch('/api/v1/models/set', { method: 'POST', headers: apiHeaders(), body: JSON.stringify({ model_id: modelId }) });
+        const resp = await apiFetch('/api/v1/models/set', { method: 'POST', headers: apiHeaders(), body: JSON.stringify({ model_id: modelId }) });
         const data = await resp.json();
         if (data.success) {
             const select = document.getElementById('modelSelect');
@@ -1771,7 +1771,7 @@ async function clearCurrentChat() {
     if (!currentChatId) return;
     if (!confirm('确定清除当前对话的所有消息？')) return;
     try {
-        await fetch(`/api/v1/history/${currentChatId}`, { method: 'DELETE', headers: apiHeaders() });
+        await apiFetch(`/api/v1/history/${currentChatId}`, { method: 'DELETE', headers: apiHeaders() });
         clearChatUI();
     } catch (e) {}
 }
@@ -2669,7 +2669,7 @@ async function loadDocList() {
     try {
         // 按 agent_id 获取对应知识库的文档列表
         const agentParam = currentAgentId ? `?agent_id=${encodeURIComponent(currentAgentId)}` : '';
-        const resp = await fetch(`/api/v1/documents${agentParam}`, { headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/documents${agentParam}`, { headers: apiHeaders() });
         const data = await resp.json();
         list.innerHTML = '';
         if (data.documents && data.documents.length > 0) {
@@ -2704,7 +2704,7 @@ async function deleteDocument(filename, btnEl) {
     btnEl.disabled = true; btnEl.textContent = '删除中...';
     try {
         const agentParam = currentAgentId ? `?agent_id=${encodeURIComponent(currentAgentId)}` : '';
-        const resp = await fetch(`/api/v1/documents/${encodeURIComponent(filename)}${agentParam}`, { method: 'DELETE', headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/documents/${encodeURIComponent(filename)}${agentParam}`, { method: 'DELETE', headers: apiHeaders() });
         const data = await resp.json();
         if (resp.ok && data.status === 'success') {
             docItem.style.transition = 'all 0.3s'; docItem.style.opacity = '0'; docItem.style.transform = 'translateX(20px)';
@@ -2864,7 +2864,7 @@ async function exportChat(format) {
     try {
         const params = new URLSearchParams({ format });
         if (agentName) params.set('agent_name', agentName);
-        const resp = await fetch(`/api/v1/export/${currentChatId}?${params.toString()}`, { headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/export/${currentChatId}?${params.toString()}`, { headers: apiHeaders() });
         if (!resp.ok) { showToast('导出失败'); return; }
 
         const blob = await resp.blob();
@@ -2923,7 +2923,7 @@ async function loadKbDocs() {
     }
     listEl.innerHTML = '<div class="kb-empty">加载中...</div>';
     try {
-        const resp = await fetch(`/api/v1/documents?agent_id=${encodeURIComponent(currentAgentId)}`, { headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/documents?agent_id=${encodeURIComponent(currentAgentId)}`, { headers: apiHeaders() });
         const data = await resp.json();
         console.log('[KB] loadKbDocs response:', JSON.stringify(data));
         // Handle multiple response formats - docs can be strings or objects
@@ -2988,7 +2988,7 @@ async function deleteKbDoc(filename) {
     if (!confirm(`确定删除文档「${filename}」？`)) return;
     try {
         const agentParam = currentAgentId ? `?agent_id=${encodeURIComponent(currentAgentId)}` : '';
-        const resp = await fetch(`/api/v1/documents/${encodeURIComponent(filename)}${agentParam}`, { method: 'DELETE', headers: apiHeaders() });
+        const resp = await apiFetch(`/api/v1/documents/${encodeURIComponent(filename)}${agentParam}`, { method: 'DELETE', headers: apiHeaders() });
         const data = await resp.json();
         if (data.status === 'success') {
             showToast('文档已删除');
@@ -3125,7 +3125,7 @@ async function loadExtKbCategories() {
     listEl.innerHTML = '<div class="kb-doc-empty">加载中...</div>';
     try {
         const url = '/api/v1/kb/categories?agent_id=' + encodeURIComponent(EXT_KB_AGENT_ID);
-        const resp = await fetch(url, { headers: apiHeaders() });
+        const resp = await apiFetch(url, { headers: apiHeaders() });
         const data = await resp.json();
         const cats = data.categories || [];
         extKbCategories = cats;
@@ -3172,7 +3172,7 @@ async function loadExtKbSubcategoriesForGroup(cat) {
     try {
         const url = '/api/v1/kb/subcategories?agent_id=' + encodeURIComponent(EXT_KB_AGENT_ID) +
             '&category=' + encodeURIComponent(cat);
-        const resp = await fetch(url, { headers: apiHeaders() });
+        const resp = await apiFetch(url, { headers: apiHeaders() });
         const data = await resp.json();
         const subcats = data.subcategories || [];
         if (subcats.length === 0) {
@@ -3256,7 +3256,7 @@ async function loadExtKbSubsubcategories() {
         const url = '/api/v1/kb/subsubcategories?agent_id=' + encodeURIComponent(EXT_KB_AGENT_ID) +
             '&category=' + encodeURIComponent(currentExtKbCategory) +
             '&subcategory=' + encodeURIComponent(currentExtKbSubcategory);
-        const resp = await fetch(url, { headers: apiHeaders() });
+        const resp = await apiFetch(url, { headers: apiHeaders() });
         const data = await resp.json();
         const subsubcats = data.subsubcategories || [];
         if (subsubcats.length === 0) {
@@ -3316,7 +3316,7 @@ async function addExtKbSubsubcategory() {
     if (!name || !name.trim()) return;
     name = name.trim();
     try {
-        const resp = await fetch('/api/v1/kb/subsubcategories', {
+        const resp = await apiFetch('/api/v1/kb/subsubcategories', {
             method: 'POST',
             headers: apiHeaders(),
             body: JSON.stringify({
@@ -3345,7 +3345,7 @@ async function delExtKbSubsubcategory(cat, sub, subsub, event) {
     if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库目录'); return; }
     if (!confirm('确认删除子目录「' + cat + ' / ' + sub + ' / ' + subsub + '」？该子目录下所有文件都会被删除！')) return;
     try {
-        const resp = await fetch('/api/v1/kb/subsubcategories', {
+        const resp = await apiFetch('/api/v1/kb/subsubcategories', {
             method: 'DELETE',
             headers: apiHeaders(),
             body: JSON.stringify({
@@ -3380,7 +3380,7 @@ async function renameExtKbSubsubcategory(cat, sub, oldSubsub, event) {
     let newSubsub = prompt('请输入新的子目录名称：', oldSubsub);
     if (!newSubsub || !newSubsub.trim() || newSubsub === oldSubsub) return;
     try {
-        const resp = await fetch('/api/v1/kb/subsubcategories', {
+        const resp = await apiFetch('/api/v1/kb/subsubcategories', {
             method: 'PUT',
             headers: apiHeaders(),
             body: JSON.stringify({
@@ -3413,7 +3413,7 @@ async function addExtKbCategory() {
     if (!name || !name.trim()) return;
     name = name.trim();
     try {
-        const resp = await fetch('/api/v1/kb/categories', {
+        const resp = await apiFetch('/api/v1/kb/categories', {
             method: 'POST',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: name })
@@ -3437,7 +3437,7 @@ async function delExtKbCategory(name, event) {
     if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库目录'); return; }
     if (!confirm('确认删除分组「' + name + '」？该分组下所有子目录和文件都会被删除！')) return;
     try {
-        const resp = await fetch('/api/v1/kb/categories', {
+        const resp = await apiFetch('/api/v1/kb/categories', {
             method: 'DELETE',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: name })
@@ -3470,7 +3470,7 @@ async function renameExtKbCategory(oldName, event) {
     let newName = prompt('请输入新的分组名称：', oldName);
     if (!newName || !newName.trim() || newName === oldName) return;
     try {
-        const resp = await fetch('/api/v1/kb/categories', {
+        const resp = await apiFetch('/api/v1/kb/categories', {
             method: 'PUT',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, old_category: oldName, new_category: newName.trim() })
@@ -3501,7 +3501,7 @@ async function addExtKbSubcategoryPrompt(cat, event) {
     if (!name || !name.trim()) return;
     name = name.trim();
     try {
-        const resp = await fetch('/api/v1/kb/subcategories', {
+        const resp = await apiFetch('/api/v1/kb/subcategories', {
             method: 'POST',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: cat, subcategory: name })
@@ -3525,7 +3525,7 @@ async function delExtKbSubcategory(cat, sub, event) {
     if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库目录'); return; }
     if (!confirm('确认删除子目录「' + cat + ' / ' + sub + '」？该子目录下所有文件都会被删除！')) return;
     try {
-        const resp = await fetch('/api/v1/kb/subcategories', {
+        const resp = await apiFetch('/api/v1/kb/subcategories', {
             method: 'DELETE',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: cat, subcategory: sub })
@@ -3557,7 +3557,7 @@ async function renameExtKbSubcategory(cat, oldSub, event) {
     let newSub = prompt('请输入新的子目录名称：', oldSub);
     if (!newSub || !newSub.trim() || newSub === oldSub) return;
     try {
-        const resp = await fetch('/api/v1/kb/subcategories', {
+        const resp = await apiFetch('/api/v1/kb/subcategories', {
             method: 'PUT',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: EXT_KB_AGENT_ID, category: cat, old_subcategory: oldSub, new_subcategory: newSub.trim() })
@@ -3592,7 +3592,7 @@ async function loadExtKbDocs() {
         const url = '/api/v1/external-kb/documents?category=' + encodeURIComponent(currentExtKbCategory) +
             '&subcategory=' + encodeURIComponent(currentExtKbSubcategory) +
             '&subsubcategory=' + encodeURIComponent(currentExtKbSubsubcategory);
-        const resp = await fetch(url, { headers: apiHeaders() });
+        const resp = await apiFetch(url, { headers: apiHeaders() });
         const data = await resp.json();
         if (data.success && data.documents && data.documents.length > 0) {
             let html = '';
@@ -3609,7 +3609,7 @@ async function loadExtKbDocs() {
         }
         // 更新统计
         const statUrl = '/api/v1/external-kb/stats?category=' + encodeURIComponent(currentExtKbCategory);
-        const statResp = await fetch(statUrl, { headers: apiHeaders() });
+        const statResp = await apiFetch(statUrl, { headers: apiHeaders() });
         const statData = await statResp.json();
         if (statData.success) {
             const docEl = document.getElementById('extKbStatDocCount');
@@ -3627,7 +3627,7 @@ async function deleteExtKbDoc(filename) {
     if (userRole !== 'admin') { showToast('仅管理员可删除全质知识库文档'); return; }
     if (!confirm('确认删除「' + filename + '」？')) return;
     try {
-        const resp = await fetch('/api/v1/external-kb/documents/' + encodeURIComponent(filename), {
+        const resp = await apiFetch('/api/v1/external-kb/documents/' + encodeURIComponent(filename), {
             method: 'DELETE',
             headers: apiHeaders()
         });
@@ -3833,7 +3833,7 @@ async function saveSurveyData() {
     localStorage.setItem('surveyData', JSON.stringify(data));
     // 保存到服务器（跨浏览器同步）
     try {
-        await fetch('/api/v1/survey/save', {
+        await apiFetch('/api/v1/survey/save', {
             method: 'POST',
             headers: apiHeaders(),
             body: JSON.stringify({ survey_data: data })
@@ -4080,7 +4080,7 @@ async function saveSurveyDraft() {
     localStorage.setItem('surveyData', JSON.stringify(data));
     // 同步到服务器
     try {
-        await fetch('/api/v1/survey/save', {
+        await apiFetch('/api/v1/survey/save', {
             method: 'POST',
             headers: apiHeaders(),
             body: JSON.stringify({ survey_data: data })
@@ -4103,7 +4103,7 @@ function clearSurveyData() {
     // 删除 localStorage
     localStorage.removeItem('surveyData');
     // 清除服务器数据
-    fetch('/api/v1/survey/clear', { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
+    apiFetch('/api/v1/survey/clear', { method: 'DELETE', headers: apiHeaders() }).catch(() => {});
     showToast('已清空所有填写内容', 2000);
 }
 
@@ -4157,7 +4157,7 @@ function addOrgRow(customFunc, customDept, customHead) {
 async function loadSurveyData() {
     // 优先从服务器加载（跨浏览器同步）
     try {
-        const resp = await fetch('/api/v1/survey/load', { headers: apiHeaders() });
+        const resp = await apiFetch('/api/v1/survey/load', { headers: apiHeaders() });
         const data = await resp.json();
         if (data.success && data.survey_data) {
             // 服务器有数据，填充表单 + 同步到 localStorage
@@ -4192,7 +4192,7 @@ function getSurveyData() {
 // 用于"一键生成"按钮点击前的数据刷新，避免用户在浏览器 A 改了数据、在浏览器 B 点一键生成时用旧数据。
 async function getSurveyDataFresh() {
     try {
-        const resp = await fetch('/api/v1/survey/load', { headers: apiHeaders() });
+        const resp = await apiFetch('/api/v1/survey/load', { headers: apiHeaders() });
         const data = await resp.json();
         if (data.success && data.survey_data) {
             // 服务器有最新数据，同步到 localStorage，再返回
@@ -4268,6 +4268,10 @@ function generateDocument(type) {
         (async () => {
             if (isLoading) return;
             isLoading = true;
+            // 创建 AbortController 以支持用户中止生成
+            currentAbortController = new AbortController();
+            document.getElementById('sendBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = '';
             // [修复] 优先从服务器拉取最新调研数据（跨浏览器同步），失败回退到 localStorage
             // 此处 surveyData 一定不为 null（localData 已保证），但保留防御性检查
             const surveyData = await getSurveyDataFresh();
@@ -4312,6 +4316,7 @@ function generateDocument(type) {
                         'Authorization': 'Bearer ' + authToken,
                         'Accept': 'text/event-stream'
                     },
+                    signal: currentAbortController.signal,
                     body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '', model_id: document.getElementById('modelSelect').value })
                 });
 
@@ -4446,7 +4451,7 @@ function generateDocument(type) {
 
                             // 保存到对话记录
                             if (currentChatId) {
-                                await fetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() });
+                                await apiFetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() });
                             }
                             await loadChatList();
                         } else if (data.type === 'error') {
@@ -4482,6 +4487,10 @@ function generateDocument(type) {
         (async () => {
             if (isLoading) return;
             isLoading = true;
+            // 创建 AbortController 以支持用户中止生成
+            currentAbortController = new AbortController();
+            document.getElementById('sendBtn').style.display = 'none';
+            document.getElementById('stopBtn').style.display = '';
             // [修复] 优先从服务器拉取最新调研数据（跨浏览器同步），失败回退到 localStorage
             const surveyData = await getSurveyDataFresh();
             if (!surveyData) {
@@ -4499,9 +4508,10 @@ function generateDocument(type) {
                 // 第一步：查询可用模板
                 bubbleContent.innerHTML = '<p>正在查找可用的程序文件模板...</p>';
                 scrollToBottom();
-                const tmplResp = await fetch('/api/v1/generate/procedure/templates', {
+                const tmplResp = await apiFetch('/api/v1/generate/procedure/templates', {
                     method: 'POST',
                     headers: apiHeaders(),
+                    signal: currentAbortController.signal,
                     body: JSON.stringify({ agent_id: currentAgentId || '' })
                 });
                 const tmplData = await tmplResp.json();
@@ -4545,6 +4555,7 @@ function generateDocument(type) {
                 const genResp = await fetch('/api/v1/generate/procedure', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken, 'Accept': 'text/event-stream' },
+                    signal: currentAbortController.signal,
                     body: JSON.stringify(requestBody)
                 });
                 if (!genResp.ok) { throw new Error('HTTP ' + genResp.status + ': ' + await genResp.text()); }
@@ -4649,7 +4660,7 @@ function generateDocument(type) {
                                 </div>
                             `;
                             scrollToBottom();
-                            if (currentChatId) { await fetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() }); }
+                            if (currentChatId) { await apiFetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() }); }
                             await loadChatList();
                         } else if (data.type === 'error') {
                             bubbleContent.innerHTML = `<p style="color:#e63946;">生成失败：${data.message || '未知错误'}</p>`;
@@ -4715,7 +4726,7 @@ function generateDocument(type) {
             `;
             // 保存到后端会话历史（只保存AI消息，不产生用户消息，不走AI）
             try {
-                await fetch('/api/v1/history/' + currentChatId, {
+                await apiFetch('/api/v1/history/' + currentChatId, {
                     method: 'POST',
                     headers: apiHeaders(),
                     body: JSON.stringify({ message: payMsgWithMarker })
@@ -4877,7 +4888,7 @@ async function loadKbCategories() {
     listEl.innerHTML = '<div class="kb-doc-empty">加载中...</div>';
     try {
         const url = '/api/v1/kb/categories?agent_id=' + encodeURIComponent(currentAgentId);
-        const resp = await fetch(url, { headers: apiHeaders() });
+        const resp = await apiFetch(url, { headers: apiHeaders() });
         const data = await resp.json();
         const cats = data.categories || [];
         kbCategories = cats;
@@ -4956,7 +4967,7 @@ async function loadKbSubcategories() {
     listEl.innerHTML = '<div class="kb-doc-empty">加载中...</div>';
     try {
         const url = '/api/v1/kb/subcategories?agent_id=' + encodeURIComponent(currentAgentId) + '&category=' + encodeURIComponent(currentKbCategory);
-        const resp = await fetch(url, { headers: apiHeaders() });
+        const resp = await apiFetch(url, { headers: apiHeaders() });
         const data = await resp.json();
         const subcats = data.subcategories || [];
         if (subcats.length === 0) {
@@ -5009,7 +5020,7 @@ async function addKbCategory() {
     }
     console.log('[KB] 新建分类:', name, 'agent:', currentAgentId);
     try {
-        const resp = await fetch('/api/v1/kb/categories', {
+        const resp = await apiFetch('/api/v1/kb/categories', {
             method: 'POST',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: name })
@@ -5036,7 +5047,7 @@ async function delKbCategory(name, event) {
     if (!currentAgentId) return;
     console.log('[KB] 删除分类:', name, 'agent:', currentAgentId);
     try {
-        const resp = await fetch('/api/v1/kb/categories', {
+        const resp = await apiFetch('/api/v1/kb/categories', {
             method: 'DELETE',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: name })
@@ -5081,7 +5092,7 @@ async function renameKbCategory(oldName, event) {
     if (!currentAgentId) return;
     console.log('[KB] 重命名分类:', oldName, '->', newName.trim());
     try {
-        const resp = await fetch('/api/v1/kb/categories', {
+        const resp = await apiFetch('/api/v1/kb/categories', {
             method: 'PUT',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, old_category: oldName, new_category: newName.trim() })
@@ -5127,7 +5138,7 @@ async function addKbSubcategory() {
     name = name.trim();
     console.log('[KB] 新建子目录:', name, 'agent:', currentAgentId, 'category:', currentKbCategory);
     try {
-        const resp = await fetch('/api/v1/kb/subcategories', {
+        const resp = await apiFetch('/api/v1/kb/subcategories', {
             method: 'POST',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: currentKbCategory, subcategory: name })
@@ -5152,7 +5163,7 @@ async function delKbSubcategory(name, event) {
     if (!currentAgentId) return;
     console.log('[KB] 删除子目录:', name, 'agent:', currentAgentId, 'category:', currentKbCategory);
     try {
-        const resp = await fetch('/api/v1/kb/subcategories', {
+        const resp = await apiFetch('/api/v1/kb/subcategories', {
             method: 'DELETE',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: currentKbCategory, subcategory: name })
@@ -5184,7 +5195,7 @@ async function renameKbSubcategory(oldName, event) {
     if (!currentAgentId) return;
     console.log('[KB] 重命名子目录:', oldName, '->', newName.trim());
     try {
-        const resp = await fetch('/api/v1/kb/subcategories', {
+        const resp = await apiFetch('/api/v1/kb/subcategories', {
             method: 'PUT',
             headers: apiHeaders(),
             body: JSON.stringify({ agent_id: currentAgentId, category: currentKbCategory, old_subcategory: oldName, new_subcategory: newName.trim() })
@@ -5385,7 +5396,7 @@ async function loadKbPageDocs() {
         const url = '/api/v1/documents?agent_id=' + encodeURIComponent(currentAgentId) +
             '&category=' + encodeURIComponent(currentKbCategory || '') +
             '&subcategory=' + encodeURIComponent(currentKbSubcategory || '');
-        const resp = await fetch(url, { headers: apiHeaders() });
+        const resp = await apiFetch(url, { headers: apiHeaders() });
         const data = await resp.json();
         let docs = data.documents || data.files || [];
         if (!Array.isArray(docs)) docs = [];
@@ -5396,7 +5407,7 @@ async function loadKbPageDocs() {
         // Get chunk count from stats API
         let totalChunks = 0;
         try {
-            const chunkResp = await fetch('/api/v1/documents/stats?agent_id=' + encodeURIComponent(currentAgentId), { headers: apiHeaders() });
+            const chunkResp = await apiFetch('/api/v1/documents/stats?agent_id=' + encodeURIComponent(currentAgentId), { headers: apiHeaders() });
             if (chunkResp.ok) {
                 const chunkData = await chunkResp.json();
                 totalChunks = chunkData.total_chunks || 0;
@@ -5507,7 +5518,7 @@ async function deleteKbPageDoc(filename, btnEl) {
     btnEl.textContent = '删除中...';
     try {
         const agentParam = currentAgentId ? '?agent_id=' + encodeURIComponent(currentAgentId) : '';
-        const resp = await fetch('/api/v1/documents/' + encodeURIComponent(filename) + agentParam, { method: 'DELETE', headers: apiHeaders() });
+        const resp = await apiFetch('/api/v1/documents/' + encodeURIComponent(filename) + agentParam, { method: 'DELETE', headers: apiHeaders() });
         const data = await resp.json();
         if (data.status === 'success') {
             docItem.style.transition = 'all 0.3s';
