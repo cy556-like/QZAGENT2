@@ -3659,11 +3659,26 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             company_name = (survey_data.get('sv_company_name') or '企业').strip()
             safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
             today_str = datetime.now().strftime("%Y%m%d")
-            generated_files = []  # 主文件（用户上传的 internal 模板，AI 修改后）
-            reference_files = []  # 参考文件（全质知识库 external 模板，原样复制，不修改公司名）
+            generated_files = []  # 主文件（AI 修改后的手册）
+            reference_files = []  # 补缺参考文件（仅含用户手册未覆盖的章节）
             failed_files = []
 
-            for ti, tmpl in enumerate(all_templates):
+            # [新需求] 拆分循环：先处理所有 internal 模板，再处理 external 模板
+            # - internal 模板：AI 修改 → 主文件
+            # - external 模板：
+            #   * 若用户未上传任何手册 → 直接在 external 上 AI 修改 → 主文件（原流程）
+            #   * 若用户已上传手册 → 提取差异章节 → 补缺参考文件
+            internal_templates = [t for t in all_templates if t['source'] == 'internal']
+            external_templates = [t for t in all_templates if t['source'] == 'external']
+            total_templates = len(all_templates)
+            ti_counter = 0  # 全局计数器，用于进度计算
+            # 收集所有用户手册的章节文本，后续用于与 external 对比
+            user_manual_sections_text = ''
+
+            # ========== 阶段 1：处理 internal 模板 ==========
+            for tmpl in internal_templates:
+                ti = ti_counter
+                ti_counter += 1
                 template_path = tmpl['path']
                 need_convert = tmpl['need_convert']
                 template_source = tmpl['source']
@@ -3683,39 +3698,13 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             continue
                         actual_template = converted
 
-                    # [新需求] external 模板作为参考文件原样复制，不调 AI 修改
-                    if template_source == 'external':
-                        tmpl_base = os.path.splitext(template_filename)[0]
-                        tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
-                        tmpl_clean = _re.sub(r'^[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_clean)
-                        tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
-                        tmpl_clean = tmpl_clean.strip() or '质量管理手册'
-                        safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
-                        # 参考文件名加「参考」后缀，避免与主文件重名
-                        ref_filename = f"参考_{safe_tmpl_name}_{safe_name}_{today_str}.docx"
-                        ref_output_path = os.path.join(export_dir, ref_filename)
-                        # 原样复制（如果需要转换，已转成 docx）
-                        from docx import Document as _DocRef
-                        ref_doc = await asyncio.to_thread(_DocRef, str(actual_template))
-                        await asyncio.to_thread(ref_doc.save, ref_output_path)
-                        # 清理 doc 转换产生的临时目录
-                        if need_convert and converted:
-                            try:
-                                import shutil
-                                shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
-                            except Exception:
-                                pass
-                        logger.info(f"[SCskill] 参考文件已复制: {ref_output_path}")
-                        ref_download_url = f"/api/v1/documents/export-download/{ref_filename}?sid={session_id_for_export}"
-                        reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（参考）", "template_source": source_label, "template_filename": template_filename})
-                        yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（参考）", "modifications_count": 0, "template_source": source_label + "（参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
-                        continue
-
                     # [主文件] internal 模板调 AI 修改
                     from docx import Document
                     doc = await asyncio.to_thread(Document, str(actual_template))
                     overview = await asyncio.to_thread(gm.extract_template_overview, doc)
                     overview_text = gm.format_overview_for_llm(overview)
+                    # 累积用户手册章节文本（用于后续与 external 对比）
+                    user_manual_sections_text += f"\n=== 用户手册：{template_filename} ===\n" + overview_text + "\n"
                     system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text, survey_data)
 
                     yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"正在调用 AI 分析...", "progress": base_progress + 10})
@@ -3801,6 +3790,195 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     logger.exception(f"[SCskill] {template_filename} 生成异常: {e}")
                     failed_files.append({"filename": template_filename, "reason": str(e)[:100]})
 
+            # ========== 阶段 2：处理 external 模板 ==========
+            for tmpl in external_templates:
+                ti = ti_counter
+                ti_counter += 1
+                template_path = tmpl['path']
+                need_convert = tmpl['need_convert']
+                template_source = tmpl['source']
+                template_filename = tmpl['filename']
+                source_label = {'internal': '企业内部文件', 'external': '全质知识库'}.get(template_source, '未知')
+                base_progress = int(15 + (ti / total_templates) * 80)
+                end_progress = int(15 + ((ti + 1) / total_templates) * 80)
+
+                yield await send({"type": "progress", "step": f"处理第 {ti+1}/{total_templates} 个：{template_filename}", "message": f"正在处理 [{source_label}] {template_filename}", "progress": base_progress})
+
+                try:
+                    actual_template = template_path
+                    if need_convert:
+                        converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
+                        if not converted:
+                            failed_files.append({"filename": template_filename, "reason": "doc转换失败"})
+                            continue
+                        actual_template = converted
+
+                    # 分支 A：用户未上传任何手册 → 直接在 external 上 AI 修改 → 主文件（原流程）
+                    if not internal_templates or not user_manual_sections_text.strip():
+                        yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"用户未上传手册，在全质模板上修改...", "progress": base_progress + 5})
+                        from docx import Document
+                        doc = await asyncio.to_thread(Document, str(actual_template))
+                        overview = await asyncio.to_thread(gm.extract_template_overview, doc)
+                        overview_text = gm.format_overview_for_llm(overview)
+                        system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text, survey_data)
+                        llm = create_llm(deep_think=True, model_override=current_model)
+                        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+                        stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0, 'header_replace': 0, 'unknown': 0, 'failed': 0}
+                        modifications_count = 0
+                        buffer = ''
+                        try:
+                            async for chunk in llm.astream(messages):
+                                if not chunk: continue
+                                token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                                if not token: continue
+                                buffer += token
+                                while '\n' in buffer:
+                                    line, buffer = buffer.split('\n', 1)
+                                    line = line.strip()
+                                    if not line or line == '===END===': continue
+                                    if line.startswith('```'): line = line.lstrip('`').replace('json', '', 1).strip()
+                                    if line.endswith('```'): line = line[:-3].strip()
+                                    if not line.startswith('{') or not line.endswith('}'): continue
+                                    try: mod = _json.loads(line)
+                                    except:
+                                        try: mod = _json.loads(_re.sub(r',\s*([}\]])', r'\1', line))
+                                        except: continue
+                                    modifications_count += 1
+                                    mod_type = mod.get('type', '')
+                                    reason = (mod.get('reason', '') or '')[:80]
+                                    progress = int(base_progress + 10 + (modifications_count % 20) * 2)
+                                    try:
+                                        if mod_type == 'paragraph':
+                                            idx = int(mod.get('index', -1)); new_text = mod.get('new_text', '')
+                                            if gm.apply_paragraph_replace(doc, idx, new_text): stats['paragraph'] += 1
+                                            else: stats['failed'] += 1
+                                            yield await send({"type": "modification", "mod_type": "paragraph", "location": f"P{idx}", "reason": reason, "preview": (new_text[:60] + '...' if len(new_text) > 60 else new_text), "progress": progress, "index": modifications_count})
+                                        elif mod_type == 'table_cell':
+                                            ti2 = int(mod.get('table', -1)); ri = int(mod.get('row', -1)); ci2 = int(mod.get('col', -1)); new_text = mod.get('new_text', '')
+                                            if gm.apply_table_cell_replace(doc, ti2, ri, ci2, new_text): stats['table_cell'] += 1
+                                            else: stats['failed'] += 1
+                                            yield await send({"type": "modification", "mod_type": "table_cell", "location": f"T{ti2}.R{ri}.C{ci2}", "reason": reason, "preview": (new_text[:60] + '...' if len(new_text) > 60 else new_text), "progress": progress, "index": modifications_count})
+                                        elif mod_type == 'global_replace':
+                                            old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_global_replace(doc, old, new)
+                                            stats['global_replace'] += n
+                                            yield await send({"type": "modification", "mod_type": "global_replace", "location": "全文", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                        elif mod_type == 'header_replace':
+                                            old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_header_replace(doc, old, new)
+                                            stats['header_replace'] += n
+                                            yield await send({"type": "modification", "mod_type": "header_replace", "location": "页眉/页脚", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                        else: stats['unknown'] += 1
+                                    except: stats['failed'] += 1
+                        except Exception as stream_err:
+                            logger.warning(f"[SCskill] {template_filename} LLM异常: {stream_err}")
+
+                        if modifications_count == 0:
+                            failed_files.append({"filename": template_filename, "reason": "AI未生成修改方案"})
+                            continue
+
+                        tmpl_base = os.path.splitext(template_filename)[0]
+                        tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
+                        tmpl_clean = _re.sub(r'^[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_clean)
+                        tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
+                        tmpl_clean = tmpl_clean.strip() or '质量管理手册'
+                        safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
+                        out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                        output_path = os.path.join(export_dir, out_filename)
+                        gm.remove_even_page_headers_footers(doc)
+                        await asyncio.to_thread(doc.save, output_path)
+                        if need_convert and converted:
+                            try:
+                                import shutil
+                                shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+                            except Exception:
+                                pass
+                        logger.info(f"[SCskill] 手册已生成(全质模板上修改): {output_path}")
+                        download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                        generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "stats": stats})
+                        yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
+                        continue
+
+                    # 分支 B：用户已上传手册 → 提取差异章节 → 补缺参考文件
+                    yield await send({"type": "progress", "step": f"对比分析 {template_filename}", "message": f"正在对比用户手册与全质模板，提取差异章节...", "progress": base_progress + 5})
+                    from docx import Document as _DocExt
+                    ext_doc = await asyncio.to_thread(_DocExt, str(actual_template))
+                    ext_overview = await asyncio.to_thread(gm.extract_template_overview, ext_doc)
+                    ext_overview_text = gm.format_overview_for_llm(ext_overview)
+
+                    # 调 AI 提取差异章节
+                    diff_system, diff_user = gm.build_diff_prompt(ext_overview_text, user_manual_sections_text, template_filename)
+                    diff_llm = create_llm(deep_think=True, model_override=current_model)
+                    diff_messages = [SystemMessage(content=diff_system), HumanMessage(content=diff_user)]
+                    diff_buffer = ''
+                    diff_sections = []  # 收集差异章节文本
+                    try:
+                        async for chunk in diff_llm.astream(diff_messages):
+                            if not chunk: continue
+                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            if not token: continue
+                            diff_buffer += token
+                            while '\n' in diff_buffer:
+                                line, diff_buffer = diff_buffer.split('\n', 1)
+                                line = line.strip()
+                                if not line or line == '===END===': continue
+                                if line.startswith('```'): line = line.lstrip('`').replace('json', '', 1).strip()
+                                if line.endswith('```'): line = line[:-3].strip()
+                                if line.startswith('差异章节:') or line.startswith('差异章节：'):
+                                    # 文本格式：差异章节: 标题 - 正文
+                                    diff_sections.append(line)
+                                    yield await send({"type": "progress", "step": f"提取差异", "message": line[:80], "progress": int(base_progress + 20 + len(diff_sections) * 5)})
+                    except Exception as stream_err:
+                        logger.warning(f"[SCskill] {template_filename} 差异提取异常: {stream_err}")
+
+                    # 清理 doc 转换产生的临时目录
+                    if need_convert and converted:
+                        try:
+                            import shutil
+                            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+                        except Exception:
+                            pass
+
+                    if not diff_sections:
+                        yield await send({"type": "progress", "step": f"无差异 {template_filename}", "message": f"用户手册已涵盖全质模板内容，无需生成参考文件", "progress": end_progress})
+                        logger.info(f"[SCskill] {template_filename}: 无差异章节，跳过参考文件")
+                        continue
+
+                    # 生成补缺参考文件 docx
+                    tmpl_base = os.path.splitext(template_filename)[0]
+                    tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
+                    tmpl_clean = _re.sub(r'^[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_clean)
+                    tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
+                    tmpl_clean = tmpl_clean.strip() or '质量管理手册'
+                    safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
+                    ref_filename = f"补缺参考_{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                    ref_output_path = os.path.join(export_dir, ref_filename)
+                    # 生成 docx：标题 + 差异章节文本
+                    from docx import Document as _DocOut
+                    from docx.shared import Pt
+                    ref_doc = _DocOut()
+                    # 标题
+                    title_p = ref_doc.add_paragraph()
+                    title_run = title_p.add_run(f"补缺参考文件 — {tmpl_clean}")
+                    title_run.bold = True
+                    title_run.font.size = Pt(16)
+                    # 说明
+                    note_p = ref_doc.add_paragraph()
+                    note_run = note_p.add_run(f"本文档为「全质知识库模板中包含、但用户上传手册中未覆盖」的章节内容，供补缺参考。\n来源模板：{template_filename}\n生成日期：{datetime.now().strftime('%Y年%m月%d日')}")
+                    note_run.font.size = Pt(10)
+                    ref_doc.add_paragraph('')  # 空行
+                    # 逐个差异章节
+                    for sec in diff_sections:
+                        p = ref_doc.add_paragraph(sec)
+                        ref_doc.add_paragraph('')  # 章节间空行
+                    await asyncio.to_thread(ref_doc.save, ref_output_path)
+                    logger.info(f"[SCskill] 补缺参考文件已生成: {ref_output_path}")
+                    ref_download_url = f"/api/v1/documents/export-download/{ref_filename}?sid={session_id_for_export}"
+                    reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "template_source": source_label, "template_filename": template_filename})
+                    yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": len(diff_sections), "template_source": source_label + "（补缺参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
+
+                except Exception as e:
+                    logger.exception(f"[SCskill] {template_filename} 生成异常: {e}")
+                    failed_files.append({"filename": template_filename, "reason": str(e)[:100]})
+
             # 保存对话记录
             try:
                 from app.memory.manager import get_session_history, flush_session
@@ -3812,8 +3990,8 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         file_list = "\n".join([f"- {f.get('display_name', f.get('filename',''))}（{f.get('modifications_count',0)} 处修改）" for f in generated_files])
                         parts.append(f"已生成 {len(generated_files)} 个质量手册：\n{file_list}")
                     if reference_files:
-                        ref_list = "\n".join([f"- {f.get('display_name', f.get('filename',''))}（原样参考，未修改）" for f in reference_files])
-                        parts.append(f"另附 {len(reference_files)} 个参考文件（来自全质知识库，未修改公司名）：\n{ref_list}")
+                        ref_list = "\n".join([f"- {f.get('display_name', f.get('filename',''))}（补缺内容，非全质模板副本）" for f in reference_files])
+                        parts.append(f"另附 {len(reference_files)} 个补缺参考文件（全质模板中包含但用户手册未覆盖的章节）：\n{ref_list}")
                     ai_msg = "\n\n".join(parts)
                     # DOWNLOAD_INFO 只含主文件，参考文件用单独的 REFERENCE_INFO 标记
                     download_info = {"type": "manual_files", "files": [{"filename": f.get("filename",""), "download_url": f.get("download_url",""), "display_name": f.get("display_name", f.get("filename","")), "modifications_count": f.get("modifications_count", 0)} for f in generated_files]}

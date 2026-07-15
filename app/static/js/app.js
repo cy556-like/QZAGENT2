@@ -2526,10 +2526,10 @@ function addMessageToUI(role, content, imageBase64) {
             downloadDiv.innerHTML = downloadHtml;
             bubble.appendChild(downloadDiv);
         }
-        // [新需求] 追加参考文件下载区域（全质知识库，未修改公司名）
+        // [新需求] 追加补缺参考文件下载区域（全质模板中包含、但用户手册未覆盖的章节）
         if (referenceInfo && referenceInfo.files && referenceInfo.files.length > 0) {
             let refHtml = '<div style="margin-top:14px;padding:10px;background:#f8f9fa;border-radius:8px;border-left:3px solid #6c757d;">';
-            refHtml += '<div style="color:#495057;font-size:13px;font-weight:600;margin-bottom:6px;">参考文件（来自全质知识库，未修改公司名）</div>';
+            refHtml += '<div style="color:#495057;font-size:13px;font-weight:600;margin-bottom:6px;">补缺参考文件（全质模板中包含、但用户上传手册未覆盖的章节）</div>';
             referenceInfo.files.forEach(f => {
                 refHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn" style="display:inline-block;padding:8px 16px;background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;font-weight:500;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename)}</a></div>`;
             });
@@ -4441,20 +4441,20 @@ function generateDocument(type) {
                                     return `<a href="${dlUrl}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;margin:4px 6px;">下载 ${dlName}</a>`;
                                 }).join('');
                             } else {
-                                downloadBtnsHtml = '<p style="color:#e63946;">未生成主文件，请重试</p>';
+                                downloadBtnsHtml = '<p style="color:#e63946;">未生成任何手册文件，请重试或检查模板是否上传</p>';
                             }
 
-                            // 生成参考文件下载按钮 HTML（全质知识库的手册，原样参考未修改）
+                            // 生成补缺参考文件下载按钮 HTML（仅包含用户手册未覆盖的章节）
                             let referenceBtnsHtml = '';
                             if (referenceFiles.length > 0) {
                                 const refBtns = referenceFiles.map(f => {
                                     const dlUrl = f.download_url || '';
-                                    const dlName = f.display_name || f.filename || '参考文件';
+                                    const dlName = f.display_name || f.filename || '补缺参考文件';
                                     return `<a href="${dlUrl}" class="doc-download-btn" style="display:inline-block;padding:8px 16px;background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;font-weight:500;margin:4px 6px;font-size:13px;">下载 ${dlName}</a>`;
                                 }).join('');
                                 referenceBtnsHtml = `
                                     <div style="margin-top:14px;padding:10px;background:#f8f9fa;border-radius:8px;border-left:3px solid #6c757d;">
-                                        <div style="color:#495057;font-size:13px;font-weight:600;margin-bottom:6px;">参考文件（来自全质知识库，未修改公司名）</div>
+                                        <div style="color:#495057;font-size:13px;font-weight:600;margin-bottom:6px;">补缺参考文件（全质模板中包含、但用户上传手册未覆盖的章节）</div>
                                         ${refBtns}
                                     </div>`;
                             }
@@ -4462,7 +4462,7 @@ function generateDocument(type) {
                             // 显示完整结果
                             const templateSourceHtml = data.template_source_text ?
                                 '<p class="gen-success-template" style="background:#f0f7ff;padding:8px 12px;border-radius:6px;color:#15589B;font-size:13px;white-space:pre-line;margin:6px 0 10px 0;">' + data.template_source_text.replace(/</g, '&lt;') + '</p>' : '';
-                            const refCountText = referenceFiles.length > 0 ? `，另附 ${referenceFiles.length} 个参考文件` : '';
+                            const refCountText = referenceFiles.length > 0 ? `，另附 ${referenceFiles.length} 个补缺参考文件` : '';
                             bubbleContent.innerHTML = `
                                 <div class="gen-manual-success">
                                     <p class="gen-success-title">✓ 质量手册已生成完成</p>
