@@ -3679,7 +3679,8 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             company_name = (survey_data.get('sv_company_name') or '企业').strip()
             safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
             today_str = datetime.now().strftime("%Y%m%d")
-            generated_files = []
+            generated_files = []  # 主文件（用户上传的 internal 模板，AI 修改后）
+            reference_files = []  # 参考文件（全质知识库 external 模板，原样复制，不修改公司名）
             failed_files = []
 
             for ti, tmpl in enumerate(all_templates):
@@ -3702,6 +3703,35 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             continue
                         actual_template = converted
 
+                    # [新需求] external 模板作为参考文件原样复制，不调 AI 修改
+                    if template_source == 'external':
+                        tmpl_base = os.path.splitext(template_filename)[0]
+                        tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
+                        tmpl_clean = _re.sub(r'^[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_clean)
+                        tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
+                        tmpl_clean = tmpl_clean.strip() or '质量管理手册'
+                        safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
+                        # 参考文件名加「参考」后缀，避免与主文件重名
+                        ref_filename = f"参考_{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                        ref_output_path = os.path.join(export_dir, ref_filename)
+                        # 原样复制（如果需要转换，已转成 docx）
+                        from docx import Document as _DocRef
+                        ref_doc = await asyncio.to_thread(_DocRef, str(actual_template))
+                        await asyncio.to_thread(ref_doc.save, ref_output_path)
+                        # 清理 doc 转换产生的临时目录
+                        if need_convert and converted:
+                            try:
+                                import shutil
+                                shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+                            except Exception:
+                                pass
+                        logger.info(f"[SCskill] 参考文件已复制: {ref_output_path}")
+                        ref_download_url = f"/api/v1/documents/export-download/{ref_filename}?sid={session_id_for_export}"
+                        reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（参考）", "template_source": source_label, "template_filename": template_filename})
+                        yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（参考）", "modifications_count": 0, "template_source": source_label + "（参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
+                        continue
+
+                    # [主文件] internal 模板调 AI 修改
                     from docx import Document
                     doc = await asyncio.to_thread(Document, str(actual_template))
                     overview = await asyncio.to_thread(gm.extract_template_overview, doc)
@@ -3785,7 +3815,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
 
                     download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
                     generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "stats": stats})
-                    yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress})
+                    yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
 
                 except Exception as e:
                     logger.exception(f"[SCskill] {template_filename} 生成异常: {e}")
@@ -3796,11 +3826,19 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 from app.memory.manager import get_session_history, flush_session
                 from langchain_core.messages import AIMessage as _AIMsg2
                 history = get_session_history(session_id_for_export)
-                if generated_files:
-                    file_list = "\n".join([f"- {f.get('display_name', f.get('filename',''))}（{f.get('modifications_count',0)} 处修改）" for f in generated_files])
-                    ai_msg = f"已生成 {len(generated_files)} 个质量手册：\n{file_list}"
+                if generated_files or reference_files:
+                    parts = []
+                    if generated_files:
+                        file_list = "\n".join([f"- {f.get('display_name', f.get('filename',''))}（{f.get('modifications_count',0)} 处修改）" for f in generated_files])
+                        parts.append(f"已生成 {len(generated_files)} 个质量手册：\n{file_list}")
+                    if reference_files:
+                        ref_list = "\n".join([f"- {f.get('display_name', f.get('filename',''))}（原样参考，未修改）" for f in reference_files])
+                        parts.append(f"另附 {len(reference_files)} 个参考文件（来自全质知识库，未修改公司名）：\n{ref_list}")
+                    ai_msg = "\n\n".join(parts)
+                    # DOWNLOAD_INFO 只含主文件，参考文件用单独的 REFERENCE_INFO 标记
                     download_info = {"type": "manual_files", "files": [{"filename": f.get("filename",""), "download_url": f.get("download_url",""), "display_name": f.get("display_name", f.get("filename","")), "modifications_count": f.get("modifications_count", 0)} for f in generated_files]}
-                    ai_msg = f"<!--DOWNLOAD_INFO:{_json.dumps(download_info, ensure_ascii=False)}-->\n\n" + ai_msg
+                    reference_info = {"type": "reference_files", "files": [{"filename": f.get("filename",""), "download_url": f.get("download_url",""), "display_name": f.get("display_name", f.get("filename",""))} for f in reference_files]}
+                    ai_msg = f"<!--DOWNLOAD_INFO:{_json.dumps(download_info, ensure_ascii=False)}--><!--REFERENCE_INFO:{_json.dumps(reference_info, ensure_ascii=False)}-->\n\n" + ai_msg
                 else:
                     ai_msg = "生成失败，未产生任何手册文件。"
                 history.add_message(_AIMsg2(content=ai_msg))
@@ -3810,7 +3848,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             except Exception as save_err:
                 logger.warning(f"[SCskill] 保存对话记录失败: {save_err}")
 
-            yield await send({"type": "success", "total_files": len(generated_files), "failed_count": len(failed_files), "files": generated_files, "failed_files": failed_files, "model_used": current_model, "progress": 100})
+            yield await send({"type": "success", "total_files": len(generated_files), "reference_count": len(reference_files), "failed_count": len(failed_files), "files": generated_files, "reference_files": reference_files, "failed_files": failed_files, "model_used": current_model, "progress": 100})
 
         except Exception as e:
             logger.exception(f"[SCskill] 生成手册异常: {e}")
