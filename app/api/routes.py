@@ -3717,20 +3717,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     buffer = ''
                     try:
                         _stream = llm.astream(messages).__aiter__()
+                        _next_task = asyncio.ensure_future(_stream.__anext__())
                         while True:
-                            # 用 wait_for 加超时，避免 LLM 思考期间前端卡死
-                            try:
-                                chunk = await asyncio.wait_for(_stream.__anext__(), timeout=3.0)
-                            except asyncio.TimeoutError:
-                                # 3 秒没新 token，发心跳让前端知道还在思考
+                            # 用 wait + timeout，超时不取消任务（避免破坏 async generator 状态）
+                            done, _pending = await asyncio.wait({_next_task}, timeout=3.0)
+                            if _next_task in done:
+                                try:
+                                    chunk = _next_task.result()
+                                except StopAsyncIteration:
+                                    break
+                                _next_task = asyncio.ensure_future(_stream.__anext__())
+                            else:
+                                # 3 秒没新 token，发心跳让前端知道还在思考（任务继续 pending，不取消）
                                 _heartbeat_count += 1
                                 _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
                                 _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
                                 _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 30))
                                 yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
                                 continue
-                            except StopAsyncIteration:
-                                break
                             if not chunk: continue
                             token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
                             if not token: continue
@@ -3844,20 +3848,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         buffer = ''
                         try:
                             _stream = llm.astream(messages).__aiter__()
+                            _next_task = asyncio.ensure_future(_stream.__anext__())
                             while True:
-                                # 用 wait_for 加超时，避免 LLM 思考期间前端卡死
-                                try:
-                                    chunk = await asyncio.wait_for(_stream.__anext__(), timeout=3.0)
-                                except asyncio.TimeoutError:
-                                    # 3 秒没新 token，发心跳让前端知道还在思考
+                                # 用 wait + timeout，超时不取消任务（避免破坏 async generator 状态）
+                                done, _pending = await asyncio.wait({_next_task}, timeout=3.0)
+                                if _next_task in done:
+                                    try:
+                                        chunk = _next_task.result()
+                                    except StopAsyncIteration:
+                                        break
+                                    _next_task = asyncio.ensure_future(_stream.__anext__())
+                                else:
+                                    # 3 秒没新 token，发心跳让前端知道还在思考（任务继续 pending，不取消）
                                     _heartbeat_count += 1
                                     _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
                                     _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
                                     _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 30))
                                     yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
                                     continue
-                                except StopAsyncIteration:
-                                    break
                                 if not chunk: continue
                                 token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
                                 if not token: continue
@@ -4397,20 +4405,24 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     buffer = ''
                     try:
                         _stream = llm.astream(messages).__aiter__()
+                        _next_task = asyncio.ensure_future(_stream.__anext__())
                         while True:
-                            # 用 wait_for 加超时，避免 LLM 思考期间前端卡死
-                            try:
-                                chunk = await asyncio.wait_for(_stream.__anext__(), timeout=3.0)
-                            except asyncio.TimeoutError:
-                                # 3 秒没新 token，发心跳让前端知道还在思考
+                            # 用 wait + timeout，超时不取消任务（避免破坏 async generator 状态）
+                            done, _pending = await asyncio.wait({_next_task}, timeout=3.0)
+                            if _next_task in done:
+                                try:
+                                    chunk = _next_task.result()
+                                except StopAsyncIteration:
+                                    break
+                                _next_task = asyncio.ensure_future(_stream.__anext__())
+                            else:
+                                # 3 秒没新 token，发心跳让前端知道还在思考（任务继续 pending，不取消）
                                 _heartbeat_count += 1
                                 _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
                                 _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
                                 _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 30))
                                 yield await send({"type": "progress", "step": f"AI分析 {filename_tmpl}", "message": _hb_msg + "（已等待 " + str(_heartbeat_count * 3) + "s）", "progress": _hb_progress})
                                 continue
-                            except StopAsyncIteration:
-                                break
                             if not chunk:
                                 continue
                             token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
