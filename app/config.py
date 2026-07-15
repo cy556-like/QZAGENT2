@@ -18,6 +18,8 @@ if not load_dotenv(_env_path):
 
 # 可用的 LLM 模型列表
 AVAILABLE_MODELS = [
+    # Auto-Model（智能自动选择）
+    {"id": "auto-model", "name": "Auto-Model", "desc": "智能自动选择最佳模型（默认GLM-5.2）"},
     # DeepSeek 系列（火山引擎）
     {"id": "DeepSeek-V4-Flash", "name": "DeepSeek-V4-Flash", "desc": "DeepSeek快速版，性价比高"},
     # GLM 系列（火山引擎Ark，与豆包/DeepSeek共用套餐）
@@ -64,7 +66,7 @@ class Settings:
     # LLM 默认配置（阿里云百炼平台，兼容模式代理多家模型）
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "glm-5.2")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "auto-model")
 
     # LLM 备用配置（主Key失效时自动切换）
     LLM_API_KEY_BACKUP: str = os.getenv("LLM_API_KEY_BACKUP", "")
