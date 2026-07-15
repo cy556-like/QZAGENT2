@@ -5429,6 +5429,7 @@ html { scroll-behavior: smooth; }
 
 
 .icon-btn.stop { background: var(--text-primary); color: white; font-size: 12px; }
+.icon-btn.stop::after { content: ''; display: block; width: 14px; height: 3px; border-radius: 2px; background: white; }
 
 
 .icon-btn.stop:hover { background: var(--accent-hover); }
