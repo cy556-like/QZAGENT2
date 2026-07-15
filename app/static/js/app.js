@@ -4169,6 +4169,24 @@ function getSurveyData() {
     }
 }
 
+// [修复] 异步获取最新调研数据：优先从服务器拉取（跨浏览器同步），失败再回退到 localStorage。
+// 用于"一键生成"按钮点击前的数据刷新，避免用户在浏览器 A 改了数据、在浏览器 B 点一键生成时用旧数据。
+async function getSurveyDataFresh() {
+    try {
+        const resp = await fetch('/api/v1/survey/load', { headers: apiHeaders() });
+        const data = await resp.json();
+        if (data.success && data.survey_data) {
+            // 服务器有最新数据，同步到 localStorage，再返回
+            localStorage.setItem('surveyData', JSON.stringify(data.survey_data));
+            return data.survey_data;
+        }
+    } catch (e) {
+        console.warn('[getSurveyDataFresh] 服务器加载失败，使用本地数据:', e);
+    }
+    // 兜底：从 localStorage 读
+    return getSurveyData();
+}
+
 function formatSurveyDataForAI() {
     const data = getSurveyData();
     if (!data) return '';
@@ -4215,12 +4233,6 @@ function generateDocument(type) {
     
     // 一键生成手册：调用 SCskill API（SSE 流式接收进度）
     if (type === 'manual') {
-        const surveyData = getSurveyData();
-        if (!surveyData) {
-            showToast('请先点击"填写体系调研"填写企业信息', 3000);
-            showSurveyForm();
-            return;
-        }
         const surveyPage = document.getElementById('surveyPage');
         if (surveyPage && surveyPage.style.display !== 'none') {
             hideSurveyForm();
@@ -4230,6 +4242,14 @@ function generateDocument(type) {
         (async () => {
             if (isLoading) return;
             isLoading = true;
+            // [修复] 改用 getSurveyDataFresh() 优先从服务器拉取最新调研数据
+            const surveyData = await getSurveyDataFresh();
+            if (!surveyData) {
+                isLoading = false;
+                showToast('请先点击"填写体系调研"填写企业信息', 3000);
+                showSurveyForm();
+                return;
+            }
             const bubble = createStreamingBubble();
             const bubbleContent = bubble.querySelector('.bubble') || bubble;
             if (!currentChatId) {
@@ -4405,12 +4425,6 @@ function generateDocument(type) {
 
     // 一键生成程序文件：先查模板→判断是否需要勾选→SSE流式生成
     if (type === 'procedure') {
-        const surveyData = getSurveyData();
-        if (!surveyData) {
-            showToast('请先点击"填写体系调研"填写企业信息', 3000);
-            showSurveyForm();
-            return;
-        }
         const surveyPage = document.getElementById('surveyPage');
         if (surveyPage && surveyPage.style.display !== 'none') {
             hideSurveyForm();
@@ -4420,6 +4434,14 @@ function generateDocument(type) {
         (async () => {
             if (isLoading) return;
             isLoading = true;
+            // [修复] 改用 getSurveyDataFresh() 优先从服务器拉取最新调研数据
+            const surveyData = await getSurveyDataFresh();
+            if (!surveyData) {
+                isLoading = false;
+                showToast('请先点击"填写体系调研"填写企业信息', 3000);
+                showSurveyForm();
+                return;
+            }
             const bubble = createStreamingBubble();
             const bubbleContent = bubble.querySelector('.bubble') || bubble;
             if (!currentChatId) {
