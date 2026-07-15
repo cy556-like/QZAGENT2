@@ -3935,21 +3935,110 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
                         continue
 
-                    # 分支 B：用户已上传手册 → 提取差异章节 → 补缺参考文件
-                    yield await send({"type": "progress", "step": f"对比分析 {template_filename}", "message": f"正在对比用户手册与全质模板，提取差异章节...", "progress": base_progress + 5})
+                    # 分支 B：用户已上传手册 → 提取已覆盖段落 → 从全质模板删除 → AI 修改调研信息 → 补缺参考文件
+                    yield await send({"type": "progress", "step": f"对比分析 {template_filename}", "message": f"正在对比用户手册与全质模板，识别已覆盖章节...", "progress": base_progress + 5})
                     from docx import Document as _DocExt
                     ext_doc = await asyncio.to_thread(_DocExt, str(actual_template))
                     ext_overview = await asyncio.to_thread(gm.extract_template_overview, ext_doc)
                     ext_overview_text = gm.format_overview_for_llm(ext_overview)
 
-                    # 调 AI 提取差异章节
-                    diff_system, diff_user = gm.build_diff_prompt(ext_overview_text, user_manual_sections_text, template_filename)
-                    diff_llm = create_llm(deep_think=True, model_override=current_model)
-                    diff_messages = [SystemMessage(content=diff_system), HumanMessage(content=diff_user)]
-                    diff_buffer = ''
-                    diff_sections = []  # 收集差异章节文本
+                    # 步骤 1：调 AI 识别「用户已覆盖」的段落索引
+                    covered_system, covered_user = gm.build_covered_prompt(ext_overview_text, user_manual_sections_text, template_filename)
+                    covered_llm = create_llm(deep_think=True, model_override=current_model)
+                    covered_messages = [SystemMessage(content=covered_system), HumanMessage(content=covered_user)]
+                    covered_indices = []
+                    covered_buffer = ''
+                    _heartbeat_count = 0
                     try:
-                        async for chunk in diff_llm.astream(diff_messages):
+                        _cov_stream = covered_llm.astream(covered_messages).__aiter__()
+                        _cov_next_task = asyncio.ensure_future(_cov_stream.__anext__())
+                        while True:
+                            done, _pending = await asyncio.wait({_cov_next_task}, timeout=3.0)
+                            if _cov_next_task in done:
+                                try:
+                                    chunk = _cov_next_task.result()
+                                except StopAsyncIteration:
+                                    break
+                                _cov_next_task = asyncio.ensure_future(_cov_stream.__anext__())
+                            else:
+                                _heartbeat_count += 1
+                                _hb_msgs = ['正在对比章节...', '正在识别已覆盖内容...', '正在分析差异...']
+                                _hb_msg = _hb_msgs[_heartbeat_count % len(_hb_msgs)]
+                                _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 20))
+                                yield await send({"type": "progress", "step": f"对比分析 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
+                                continue
+                            if not chunk: continue
+                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            if not token: continue
+                            covered_buffer += token
+                            while '\n' in covered_buffer:
+                                line, covered_buffer = covered_buffer.split('\n', 1)
+                                line = line.strip()
+                                if not line or line == '===END===': continue
+                                if line.startswith('```'): line = line.lstrip('`').replace('json', '', 1).strip()
+                                if line.endswith('```'): line = line[:-3].strip()
+                                if not line.startswith('{') or not line.endswith('}'): continue
+                                try:
+                                    cov_obj = _json.loads(line)
+                                    indices = cov_obj.get('indices', [])
+                                    if isinstance(indices, list):
+                                        covered_indices.extend(int(i) for i in indices if isinstance(i, (int, str)) and str(i).isdigit())
+                                        reason = cov_obj.get('reason', '')[:60]
+                                        yield await send({"type": "progress", "step": f"识别已覆盖", "message": f"{reason}（{len(indices)} 段）", "progress": int(base_progress + 15 + len(covered_indices) * 2)})
+                                except: continue
+                    except Exception as cov_err:
+                        logger.warning(f"[SCskill] {template_filename} 覆盖识别异常: {cov_err}")
+
+                    # 清理 doc 转换产生的临时目录
+                    if need_convert and converted:
+                        try:
+                            import shutil
+                            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
+                        except Exception:
+                            pass
+
+                    # 步骤 2：判断是否需要生成补缺参考文件
+                    total_ext_paras = len(ext_doc.paragraphs)
+                    if total_ext_paras > 0 and len(covered_indices) >= total_ext_paras * 0.95:
+                        yield await send({"type": "progress", "step": f"无差异 {template_filename}", "message": f"用户手册已涵盖全质模板 95% 以上内容，无需生成补缺参考文件", "progress": end_progress})
+                        logger.info(f"[SCskill] {template_filename}: 已覆盖 {len(covered_indices)}/{total_ext_paras} 段，跳过参考文件")
+                        continue
+
+                    # 步骤 3：从全质模板 docx 中删除已覆盖的段落（保留差异部分 + 保留原始格式）
+                    yield await send({"type": "progress", "step": f"生成差异文档 {template_filename}", "message": f"正在从全质模板中移除已覆盖章节（{len(covered_indices)} 段），保留差异部分...", "progress": int(base_progress + 40)})
+                    deleted_count = await asyncio.to_thread(gm.delete_paragraphs_by_indices, ext_doc, covered_indices)
+                    gm.remove_even_page_headers_footers(ext_doc)
+                    logger.info(f"[SCskill] {template_filename}: 删除 {deleted_count} 段已覆盖内容，保留差异部分")
+
+                    # 步骤 4：对差异文档调 AI 修改调研信息（公司名、人名、日期等，跟主文件一样的处理）
+                    yield await send({"type": "progress", "step": f"AI修改差异文档 {template_filename}", "message": f"正在调用 AI 把调研信息修改进补缺参考文件...", "progress": int(base_progress + 45)})
+                    diff_overview = await asyncio.to_thread(gm.extract_template_overview, ext_doc)
+                    diff_overview_text = gm.format_overview_for_llm(diff_overview)
+                    diff_system_prompt, diff_user_prompt = gm.build_llm_prompt(diff_overview_text, survey_text, survey_data)
+                    diff_llm = create_llm(deep_think=True, model_override=current_model)
+                    diff_messages = [SystemMessage(content=diff_system_prompt), HumanMessage(content=diff_user_prompt)]
+                    diff_stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0, 'header_replace': 0, 'unknown': 0, 'failed': 0}
+                    diff_modifications_count = 0
+                    diff_buffer = ''
+                    _heartbeat_count = 0
+                    try:
+                        _diff_stream = diff_llm.astream(diff_messages).__aiter__()
+                        _diff_next_task = asyncio.ensure_future(_diff_stream.__anext__())
+                        while True:
+                            done, _pending = await asyncio.wait({_diff_next_task}, timeout=3.0)
+                            if _diff_next_task in done:
+                                try:
+                                    chunk = _diff_next_task.result()
+                                except StopAsyncIteration:
+                                    break
+                                _diff_next_task = asyncio.ensure_future(_diff_stream.__anext__())
+                            else:
+                                _heartbeat_count += 1
+                                _hb_msgs = ['正在思考中...', '正在分析差异内容...', '正在生成修改方案...', '正在校验调研数据...']
+                                _hb_msg = _hb_msgs[_heartbeat_count % len(_hb_msgs)]
+                                _hb_progress = int(base_progress + 50 + min(_heartbeat_count, 20))
+                                yield await send({"type": "progress", "step": f"AI修改差异文档 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
+                                continue
                             if not chunk: continue
                             token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
                             if not token: continue
@@ -3960,27 +4049,40 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                 if not line or line == '===END===': continue
                                 if line.startswith('```'): line = line.lstrip('`').replace('json', '', 1).strip()
                                 if line.endswith('```'): line = line[:-3].strip()
-                                if line.startswith('差异章节:') or line.startswith('差异章节：'):
-                                    # 文本格式：差异章节: 标题 - 正文
-                                    diff_sections.append(line)
-                                    yield await send({"type": "progress", "step": f"提取差异", "message": line[:80], "progress": int(base_progress + 20 + len(diff_sections) * 5)})
-                    except Exception as stream_err:
-                        logger.warning(f"[SCskill] {template_filename} 差异提取异常: {stream_err}")
+                                if not line.startswith('{') or not line.endswith('}'): continue
+                                try: dmod = _json.loads(line)
+                                except:
+                                    try: dmod = _json.loads(_re.sub(r',\s*([}\]])', r'\1', line))
+                                    except: continue
+                                diff_modifications_count += 1
+                                dmod_type = dmod.get('type', '')
+                                dreason = (dmod.get('reason', '') or '')[:80]
+                                dprogress = int(base_progress + 50 + (diff_modifications_count % 20) * 2)
+                                try:
+                                    if dmod_type == 'paragraph':
+                                        didx = int(dmod.get('index', -1)); dnew_text = dmod.get('new_text', '')
+                                        if gm.apply_paragraph_replace(ext_doc, didx, dnew_text): diff_stats['paragraph'] += 1
+                                        else: diff_stats['failed'] += 1
+                                        yield await send({"type": "modification", "mod_type": "paragraph", "location": f"补缺P{didx}", "reason": dreason, "preview": (dnew_text[:60] + '...' if len(dnew_text) > 60 else dnew_text), "progress": dprogress, "index": diff_modifications_count})
+                                    elif dmod_type == 'table_cell':
+                                        dti = int(dmod.get('table', -1)); dri = int(dmod.get('row', -1)); dci = int(dmod.get('col', -1)); dnew_text = dmod.get('new_text', '')
+                                        if gm.apply_table_cell_replace(ext_doc, dti, dri, dci, dnew_text): diff_stats['table_cell'] += 1
+                                        else: diff_stats['failed'] += 1
+                                        yield await send({"type": "modification", "mod_type": "table_cell", "location": f"补缺T{dti}.R{dri}.C{dci}", "reason": dreason, "preview": (dnew_text[:60] + '...' if len(dnew_text) > 60 else dnew_text), "progress": dprogress, "index": diff_modifications_count})
+                                    elif dmod_type == 'global_replace':
+                                        dold = dmod.get('old', ''); dnew = dmod.get('new', ''); dn = gm.apply_global_replace(ext_doc, dold, dnew)
+                                        diff_stats['global_replace'] += dn
+                                        yield await send({"type": "modification", "mod_type": "global_replace", "location": "补缺全文", "reason": dreason, "preview": f"'{dold}' → '{dnew}'（{dn} 处）", "progress": dprogress, "index": diff_modifications_count})
+                                    elif dmod_type == 'header_replace':
+                                        dold = dmod.get('old', ''); dnew = dmod.get('new', ''); dn = gm.apply_header_replace(ext_doc, dold, dnew)
+                                        diff_stats['header_replace'] += dn
+                                        yield await send({"type": "modification", "mod_type": "header_replace", "location": "补缺页眉/页脚", "reason": dreason, "preview": f"'{dold}' → '{dnew}'（{dn} 处）", "progress": dprogress, "index": diff_modifications_count})
+                                    else: diff_stats['unknown'] += 1
+                                except: diff_stats['failed'] += 1
+                    except Exception as diff_stream_err:
+                        logger.warning(f"[SCskill] {template_filename} 补缺文档 AI 修改异常: {diff_stream_err}")
 
-                    # 清理 doc 转换产生的临时目录
-                    if need_convert and converted:
-                        try:
-                            import shutil
-                            shutil.rmtree(os.path.dirname(converted), ignore_errors=True)
-                        except Exception:
-                            pass
-
-                    if not diff_sections:
-                        yield await send({"type": "progress", "step": f"无差异 {template_filename}", "message": f"用户手册已涵盖全质模板内容，无需生成参考文件", "progress": end_progress})
-                        logger.info(f"[SCskill] {template_filename}: 无差异章节，跳过参考文件")
-                        continue
-
-                    # 生成补缺参考文件 docx
+                    # 步骤 5：保存补缺参考文件（保留全质模板原始格式：页眉页脚、表格、样式）
                     tmpl_base = os.path.splitext(template_filename)[0]
                     tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
                     tmpl_clean = _re.sub(r'^[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_clean)
@@ -3989,29 +4091,11 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
                     ref_filename = f"补缺参考_{safe_tmpl_name}_{safe_name}_{today_str}.docx"
                     ref_output_path = os.path.join(export_dir, ref_filename)
-                    # 生成 docx：标题 + 差异章节文本
-                    from docx import Document as _DocOut
-                    from docx.shared import Pt
-                    ref_doc = _DocOut()
-                    # 标题
-                    title_p = ref_doc.add_paragraph()
-                    title_run = title_p.add_run(f"补缺参考文件 — {tmpl_clean}")
-                    title_run.bold = True
-                    title_run.font.size = Pt(16)
-                    # 说明
-                    note_p = ref_doc.add_paragraph()
-                    note_run = note_p.add_run(f"本文档为「全质知识库模板中包含、但用户上传手册中未覆盖」的章节内容，供补缺参考。\n来源模板：{template_filename}\n生成日期：{datetime.now().strftime('%Y年%m月%d日')}")
-                    note_run.font.size = Pt(10)
-                    ref_doc.add_paragraph('')  # 空行
-                    # 逐个差异章节
-                    for sec in diff_sections:
-                        p = ref_doc.add_paragraph(sec)
-                        ref_doc.add_paragraph('')  # 章节间空行
-                    await asyncio.to_thread(ref_doc.save, ref_output_path)
-                    logger.info(f"[SCskill] 补缺参考文件已生成: {ref_output_path}")
+                    await asyncio.to_thread(ext_doc.save, ref_output_path)
+                    logger.info(f"[SCskill] 补缺参考文件已生成: {ref_output_path}（删除 {deleted_count} 段已覆盖，AI 修改 {diff_modifications_count} 处）")
                     ref_download_url = f"/api/v1/documents/export-download/{ref_filename}?sid={session_id_for_export}"
-                    reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "template_source": source_label, "template_filename": template_filename})
-                    yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": len(diff_sections), "template_source": source_label + "（补缺参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
+                    reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_modifications_count, "template_source": source_label, "template_filename": template_filename})
+                    yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_modifications_count, "template_source": source_label + "（补缺参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
 
                 except Exception as e:
                     logger.exception(f"[SCskill] {template_filename} 生成异常: {e}")
