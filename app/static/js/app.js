@@ -1851,14 +1851,7 @@ function createStreamingBubble() {
     bubble.className = 'bubble';
     const actions = document.createElement('div');
     actions.className = 'message-actions';
-    actions.innerHTML = `
-        <button class="msg-action-btn" title="复制" onclick="copyMessage(this)" aria-label="复制消息">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-        </button>
-        <button class="msg-action-btn" title="重新生成" onclick="regenerateMessage(this)" aria-label="重新生成">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-        </button>
-    `;
+    actions.innerHTML = '';
     div.appendChild(bubble);
     div.appendChild(actions);
     container.appendChild(div);
@@ -2548,16 +2541,7 @@ function addMessageToUI(role, content, imageBase64) {
 
     const actions = document.createElement('div');
     actions.className = 'message-actions';
-    if (role === 'assistant') {
-        actions.innerHTML = `
-            <button class="msg-action-btn" title="复制" onclick="copyMessage(this)" aria-label="复制消息">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            </button>
-            <button class="msg-action-btn" title="重新生成" onclick="regenerateMessage(this)" aria-label="重新生成">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-            </button>
-        `;
-    } else {
+    if (role === 'user') {
         actions.innerHTML = `
             <button class="msg-action-btn" title="复制" onclick="copyMessage(this)" aria-label="复制消息">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
