@@ -987,9 +987,27 @@ async function loadModels() {
         data.models.forEach(m => {
             const opt = document.createElement('option');
             opt.value = m.id; opt.textContent = m.name; opt.title = m.desc;
-            if (m.id === data.current) opt.selected = true;
             select.appendChild(opt);
         });
+        // [需求] 每次刷新网页，模型选择菜单默认显示 Auto-Model
+        // 不使用后端 data.current（可能是上次切换后的值），强制前端默认 auto-model
+        // 如果 auto-model 不在列表中，回退到后端返回的 current
+        const autoOpt = Array.from(select.options).find(o => o.value === 'auto-model');
+        if (autoOpt) {
+            select.value = 'auto-model';
+            // 同步到后端，确保后端 LLM_MODEL 也是 auto-model（避免下次刷新又变回旧值）
+            try {
+                await fetch('/api/v1/models/set', {
+                    method: 'POST',
+                    headers: apiHeaders(),
+                    body: JSON.stringify({ model_id: 'auto-model' })
+                });
+            } catch (syncErr) {
+                console.warn('[loadModels] 同步后端模型失败:', syncErr);
+            }
+        } else {
+            select.value = data.current || (data.models[0] && data.models[0].id) || '';
+        }
     } catch (e) { console.error('加载模型列表失败', e); }
 }
 
