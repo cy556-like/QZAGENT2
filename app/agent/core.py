@@ -443,6 +443,10 @@ def create_llm(deep_think: bool = False, fast_mode: bool = False, model_override
     global _primary_key_failed
     model = model_override or settings.LLM_MODEL
     
+    # Auto-Model：智能自动解析为最佳模型（当前默认 GLM-5.2）
+    if model == "auto-model":
+        model = "glm-5.2"
+    
     if fast_mode and not model_override:
         # 从 FAST_MODELS 配置中选取快速模型（如当前模型已是快速模型则不切换）
         if model not in FAST_MODELS and FAST_MODELS:
