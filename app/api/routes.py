@@ -40,7 +40,7 @@ from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Request, Query, Header
 
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, FileResponse
 
 from pydantic import BaseModel
 
@@ -2497,39 +2497,19 @@ async def download_export_document(filename: str, sid: str = None):
 
 
 
-    try:
-
-        with open(file_path, "rb") as f:
-
-            content = f.read()
-
-    except Exception as e:
-
-        raise HTTPException(status_code=500, detail=f"读取导出文档失败: {str(e)}")
-
-
-
     # 使用 RFC 5987 编码处理中文文件名
-
     from urllib.parse import quote
-
     encoded_filename = quote(safe_filename)
 
-
-
-    return Response(
-
-        content=content,
-
+    return FileResponse(
+        path=file_path,
         media_type=media_type,
-
+        filename=safe_filename,
         headers={
-
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
-
         }
-
     )
+
 
 
 
