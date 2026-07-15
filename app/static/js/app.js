@@ -4233,6 +4233,13 @@ function generateDocument(type) {
     
     // 一键生成手册：调用 SCskill API（SSE 流式接收进度）
     if (type === 'manual') {
+        // [保留] 同步快速检查本地数据，避免没数据时 UI 闪烁（先切聊天页又切回调研页）
+        const localData = getSurveyData();
+        if (!localData) {
+            showToast('请先点击"填写体系调研"填写企业信息', 3000);
+            showSurveyForm();
+            return;
+        }
         const surveyPage = document.getElementById('surveyPage');
         if (surveyPage && surveyPage.style.display !== 'none') {
             hideSurveyForm();
@@ -4242,12 +4249,12 @@ function generateDocument(type) {
         (async () => {
             if (isLoading) return;
             isLoading = true;
-            // [修复] 改用 getSurveyDataFresh() 优先从服务器拉取最新调研数据
+            // [修复] 优先从服务器拉取最新调研数据（跨浏览器同步），失败回退到 localStorage
+            // 此处 surveyData 一定不为 null（localData 已保证），但保留防御性检查
             const surveyData = await getSurveyDataFresh();
             if (!surveyData) {
                 isLoading = false;
-                showToast('请先点击"填写体系调研"填写企业信息', 3000);
-                showSurveyForm();
+                showToast('数据加载失败，请重试', 3000);
                 return;
             }
             const bubble = createStreamingBubble();
@@ -4425,6 +4432,13 @@ function generateDocument(type) {
 
     // 一键生成程序文件：先查模板→判断是否需要勾选→SSE流式生成
     if (type === 'procedure') {
+        // [保留] 同步快速检查本地数据，避免没数据时 UI 闪烁
+        const localData = getSurveyData();
+        if (!localData) {
+            showToast('请先点击"填写体系调研"填写企业信息', 3000);
+            showSurveyForm();
+            return;
+        }
         const surveyPage = document.getElementById('surveyPage');
         if (surveyPage && surveyPage.style.display !== 'none') {
             hideSurveyForm();
@@ -4434,12 +4448,11 @@ function generateDocument(type) {
         (async () => {
             if (isLoading) return;
             isLoading = true;
-            // [修复] 改用 getSurveyDataFresh() 优先从服务器拉取最新调研数据
+            // [修复] 优先从服务器拉取最新调研数据（跨浏览器同步），失败回退到 localStorage
             const surveyData = await getSurveyDataFresh();
             if (!surveyData) {
                 isLoading = false;
-                showToast('请先点击"填写体系调研"填写企业信息', 3000);
-                showSurveyForm();
+                showToast('数据加载失败，请重试', 3000);
                 return;
             }
             const bubble = createStreamingBubble();
