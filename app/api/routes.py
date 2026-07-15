@@ -3617,8 +3617,14 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
         export_dir = os.path.join(export_dir, session_id_for_export)
     os.makedirs(export_dir, exist_ok=True)
 
-    current_model = get_current_model() or "glm-5.2"
-    logger.info(f"[SCskill] AI 生成质量手册（批量）: user={username}, model={current_model}")
+    # 优先使用前端传来的 model_id，确保与用户在下拉框的选择一致
+    request_model_id = (body.get("model_id") or "").strip()
+    valid_model_ids = set(m["id"] for m in AVAILABLE_MODELS)
+    current_model = request_model_id if request_model_id in valid_model_ids else (get_current_model() or "glm-5.2")
+    if request_model_id and request_model_id in valid_model_ids:
+        logger.info(f"[SCskill] 使用前端指定模型: {current_model}")
+    else:
+        logger.info(f"[SCskill] 使用全局模型: {current_model}")
 
     async def sse_event_stream():
         async def send(evt: dict):
@@ -3682,7 +3688,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
 
                     yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"正在调用 AI 分析...", "progress": base_progress + 10})
 
-                    llm = create_llm(deep_think=True)
+                    llm = create_llm(deep_think=True, model_override=current_model)
                     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
                     stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0, 'header_replace': 0, 'unknown': 0, 'failed': 0}
                     modifications_count = 0
@@ -3947,8 +3953,14 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
         export_dir = os.path.join(export_dir, session_id_for_export)
     os.makedirs(export_dir, exist_ok=True)
 
-    current_model = get_current_model() or "glm-5.2"
-    logger.info(f"[CXskill] AI 生成程序文件（批量）: user={username}, model={current_model}")
+    # 优先使用前端传来的 model_id，确保与用户在下拉框的选择一致
+    request_model_id = (body.get("model_id") or "").strip()
+    valid_model_ids = set(m["id"] for m in AVAILABLE_MODELS)
+    current_model = request_model_id if request_model_id in valid_model_ids else (get_current_model() or "glm-5.2")
+    if request_model_id and request_model_id in valid_model_ids:
+        logger.info(f"[CXskill] 使用前端指定模型: {current_model}")
+    else:
+        logger.info(f"[CXskill] 使用全局模型: {current_model}")
 
     async def sse_event_stream():
         async def send(evt: dict):
@@ -4120,7 +4132,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     system_prompt, user_prompt = cx.build_llm_prompt(overview_text, survey_text, filename_tmpl)
 
                     # AI 修改
-                    llm = create_llm(deep_think=True)
+                    llm = create_llm(deep_think=True, model_override=current_model)
                     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
 
                     stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
