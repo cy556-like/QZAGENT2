@@ -4293,7 +4293,7 @@ function generateDocument(type) {
                         'Authorization': 'Bearer ' + authToken,
                         'Accept': 'text/event-stream'
                     },
-                    body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '' })
+                    body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '', model_id: document.getElementById('modelSelect').value })
                 });
 
                 if (!genResp.ok) {
@@ -4520,7 +4520,7 @@ function generateDocument(type) {
                 const messageEl = bubbleContent.querySelector('.gen-message');
                 const modsEl = bubbleContent.querySelector('.gen-modifications');
 
-                const requestBody = { survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '' };
+                const requestBody = { survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '', model_id: document.getElementById('modelSelect').value };
                 if (selectedTemplates) requestBody.selected_templates = selectedTemplates;
 
                 const genResp = await fetch('/api/v1/generate/procedure', {
