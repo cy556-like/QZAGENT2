@@ -4371,7 +4371,10 @@ function generateDocument(type) {
                             scrollToBottom();
                         } else if (data.type === 'success') {
                             totalMods = data.modifications_count || receivedCount;
-                            const stats = data.stats || {};
+                            // stats/failed_files/files 可能在 data 顶层，也可能在 data.files[0] 中
+                            const files = data.files || [];
+                            const primaryFile = files[0] || {};
+                            const stats = data.stats || primaryFile.stats || {};
                             const statLines = [];
                             if (stats.paragraph) statLines.push(`段落 ${stats.paragraph} 处`);
                             if (stats.table_cell) statLines.push(`表格 ${stats.table_cell} 处`);
@@ -4382,6 +4385,18 @@ function generateDocument(type) {
                             progressBarEl.style.width = '100%';
                             stepTextEl.textContent = '完成';
                             stepTextEl.previousElementSibling.style.display = 'none'; // 隐藏 spinner
+
+                            // 生成下载按钮 HTML
+                            let downloadBtnsHtml = '';
+                            if (files.length > 0) {
+                                downloadBtnsHtml = files.map(f => {
+                                    const dlUrl = f.download_url || '';
+                                    const dlName = f.display_name || f.filename || '下载文件';
+                                    return `<a href="${dlUrl}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;margin:4px 6px;">下载 ${dlName}</a>`;
+                                }).join('');
+                            } else {
+                                downloadBtnsHtml = '<p style="color:#e63946;">未生成文件，请重试</p>';
+                            }
 
                             // 显示完整结果
                             const templateSourceHtml = data.template_source_text ?
@@ -4405,7 +4420,7 @@ function generateDocument(type) {
                                         </div>
                                     </details>
                                     <br>
-                                    <a href="${data.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;">点击下载质量手册</a>
+                                    ${downloadBtnsHtml}
                                 </div>
                             `;
                             scrollToBottom();
