@@ -3678,7 +3678,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     doc = await asyncio.to_thread(Document, str(actual_template))
                     overview = await asyncio.to_thread(gm.extract_template_overview, doc)
                     overview_text = gm.format_overview_for_llm(overview)
-                    system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text)
+                    system_prompt, user_prompt = gm.build_llm_prompt(overview_text, survey_text, survey_data)
 
                     yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"正在调用 AI 分析...", "progress": base_progress + 10})
 
