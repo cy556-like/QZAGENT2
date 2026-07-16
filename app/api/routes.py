@@ -4225,6 +4225,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     failed_files.append({"filename": template_filename, "reason": str(e)[:100]})
 
             # 保存对话记录
+            yield await send({"type": "progress", "step": "保存记录", "message": "正在保存对话记录并生成下载链接...", "progress": 96})
             try:
                 from app.memory.manager import get_session_history, flush_session
                 from langchain_core.messages import AIMessage as _AIMsg2
@@ -4763,6 +4764,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                         "message": f"❌ {dept} 生成失败: {str(e)[:80]}", "progress": end_progress})
 
             # 最终汇总
+            yield await send({"type": "progress", "step": "保存记录", "message": "正在保存对话记录并生成下载链接...", "progress": 96})
             # [Bug 修复] 把对话记录保存到会话历史，否则重启后前端看不到
             # 同时把文件下载信息嵌入消息，前端加载历史时能重新渲染下载按钮
             # 注意：用户点按钮不是发消息，不保存 HumanMessage，只保存 AI 回复
