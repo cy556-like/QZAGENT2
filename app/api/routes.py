@@ -1491,6 +1491,103 @@ def _user_agent_id(agent_id: str, username: str) -> str:
         return agent_id
     return f"{username}_{agent_id}"
 
+
+async def astream_with_heartbeat(llm, messages, send_func, step_label, base_progress, max_progress=None, interval=3.0):
+    """带心跳的 LLM 流式接收器。
+
+    解决问题：GLM-5.2 等模型在 thinking 阶段不输出任何 chunk，
+    直接用 `async for chunk in llm.astream(messages)` 会让前端 SSE 长时间无事件，感觉卡死。
+
+    本函数用独立的后台 task + asyncio.Queue 实现：
+    1. LLM 生产者 task：遍历 llm.astream(messages)，把 chunk 放进 queue
+    2. 心跳生产者 task：每 interval 秒调 send_func 生成 SSE 字符串，放进 queue
+    3. 主循环从 queue 取，yield 给外层 SSE 生成器
+
+    用法（在 SSE 生成器中，替代 `async for chunk in llm.astream(messages)`）：
+        async for item_type, item_data in astream_with_heartbeat(llm, messages, send, step_label, base_progress):
+            if item_type == 'sse_str':
+                yield item_data  # 心跳 SSE 字符串，直接 yield 给客户端
+            elif item_type == 'chunk':
+                chunk = item_data  # LLM chunk 对象
+                # 处理 chunk（原来的 token 提取 + buffer + NDJSON 解析逻辑）
+            elif item_type == 'done':
+                break
+            elif item_type == 'error':
+                raise item_data
+
+    Args:
+        llm: LangChain Chat 模型实例
+        messages: 消息列表
+        send_func: SSE 发送函数（routes.py 内的 send），用于发心跳
+        step_label: 心跳事件显示的 step 名称（如 f"AI分析 {filename}"）
+        base_progress: 心跳进度起点
+        max_progress: 心跳进度上限（默认 base_progress + 30）
+        interval: 心跳间隔（秒），默认 3.0
+
+    Yields:
+        tuple: (item_type, item_data)
+            - ('sse_str', str): 心跳 SSE 字符串，外层直接 yield
+            - ('chunk', chunk): LLM chunk 对象
+            - ('done', None): 流结束
+            - ('error', Exception): 异常
+    """
+    if max_progress is None:
+        max_progress = base_progress + 30
+    _heartbeat_count = 0
+    _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
+    _queue = asyncio.Queue()
+    _llm_done = False
+
+    async def _llm_producer():
+        nonlocal _llm_done
+        try:
+            async for chunk in llm.astream(messages):
+                await _queue.put(('chunk', chunk))
+        except Exception as e:
+            await _queue.put(('error', e))
+        finally:
+            _llm_done = True
+            await _queue.put(('done', None))
+
+    async def _heartbeat_producer():
+        nonlocal _heartbeat_count
+        while not _llm_done:
+            await asyncio.sleep(interval)
+            if _llm_done:
+                break
+            _heartbeat_count += 1
+            _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
+            _hb_progress = int(base_progress + min(_heartbeat_count, max_progress - base_progress))
+            try:
+                hb_evt = {"type": "progress", "step": step_label, "message": _hb_msg + "（已等待 " + str(_heartbeat_count * int(interval)) + "s）", "progress": _hb_progress}
+                await _queue.put(('sse_str', await send_func(hb_evt)))
+            except Exception:
+                pass
+
+    _llm_task = asyncio.ensure_future(_llm_producer())
+    _heartbeat_task = asyncio.ensure_future(_heartbeat_producer())
+
+    try:
+        while True:
+            item_type, item_data = await _queue.get()
+            yield (item_type, item_data)
+            if item_type in ('done', 'error'):
+                break
+    finally:
+        if _heartbeat_task and not _heartbeat_task.done():
+            _heartbeat_task.cancel()
+            try:
+                await _heartbeat_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if _llm_task and not _llm_task.done():
+            _llm_task.cancel()
+            try:
+                await _llm_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
 @router.get("/kb/categories", summary="列出所有一级分类")
 async def list_categories_api(
     agent_id: str = Query(..., description="智能体ID"),
@@ -3716,25 +3813,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     _heartbeat_count = 0
                     buffer = ''
                     try:
-                        _stream = llm.astream(messages).__aiter__()
-                        _next_task = asyncio.ensure_future(_stream.__anext__())
-                        while True:
-                            # 用 wait + timeout，超时不取消任务（避免破坏 async generator 状态）
-                            done, _pending = await asyncio.wait({_next_task}, timeout=3.0)
-                            if _next_task in done:
-                                try:
-                                    chunk = _next_task.result()
-                                except StopAsyncIteration:
-                                    break
-                                _next_task = asyncio.ensure_future(_stream.__anext__())
-                            else:
-                                # 3 秒没新 token，发心跳让前端知道还在思考（任务继续 pending，不取消）
-                                _heartbeat_count += 1
-                                _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
-                                _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
-                                _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 30))
-                                yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
+                        async for _item_type, _item_data in astream_with_heartbeat(llm, messages, send, f"AI分析 {template_filename}", base_progress + 10):
+
+                            if _item_type == 'sse_str':
+
+                                yield _item_data
+
                                 continue
+
+                            elif _item_type == 'done':
+
+                                break
+
+                            elif _item_type == 'error':
+
+                                raise _item_data
+
+                            chunk = _item_data
+
                             if not chunk: continue
                             token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
                             if not token: continue
@@ -3847,25 +3943,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         _heartbeat_count = 0
                         buffer = ''
                         try:
-                            _stream = llm.astream(messages).__aiter__()
-                            _next_task = asyncio.ensure_future(_stream.__anext__())
-                            while True:
-                                # 用 wait + timeout，超时不取消任务（避免破坏 async generator 状态）
-                                done, _pending = await asyncio.wait({_next_task}, timeout=3.0)
-                                if _next_task in done:
-                                    try:
-                                        chunk = _next_task.result()
-                                    except StopAsyncIteration:
-                                        break
-                                    _next_task = asyncio.ensure_future(_stream.__anext__())
-                                else:
-                                    # 3 秒没新 token，发心跳让前端知道还在思考（任务继续 pending，不取消）
-                                    _heartbeat_count += 1
-                                    _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
-                                    _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
-                                    _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 30))
-                                    yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
+                            async for _item_type, _item_data in astream_with_heartbeat(llm, messages, send, f"AI分析 {template_filename}", base_progress + 10):
+
+                                if _item_type == 'sse_str':
+
+                                    yield _item_data
+
                                     continue
+
+                                elif _item_type == 'done':
+
+                                    break
+
+                                elif _item_type == 'error':
+
+                                    raise _item_data
+
+                                chunk = _item_data
+
                                 if not chunk: continue
                                 token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
                                 if not token: continue
@@ -3950,23 +4045,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     covered_buffer = ''
                     _heartbeat_count = 0
                     try:
-                        _cov_stream = covered_llm.astream(covered_messages).__aiter__()
-                        _cov_next_task = asyncio.ensure_future(_cov_stream.__anext__())
-                        while True:
-                            done, _pending = await asyncio.wait({_cov_next_task}, timeout=3.0)
-                            if _cov_next_task in done:
-                                try:
-                                    chunk = _cov_next_task.result()
-                                except StopAsyncIteration:
-                                    break
-                                _cov_next_task = asyncio.ensure_future(_cov_stream.__anext__())
-                            else:
-                                _heartbeat_count += 1
-                                _hb_msgs = ['正在对比章节...', '正在识别已覆盖内容...', '正在分析差异...']
-                                _hb_msg = _hb_msgs[_heartbeat_count % len(_hb_msgs)]
-                                _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 20))
-                                yield await send({"type": "progress", "step": f"对比分析 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
+                        async for _item_type, _item_data in astream_with_heartbeat(covered_llm, covered_messages, send, f"对比分析 {template_filename}", base_progress + 10):
+
+                            if _item_type == 'sse_str':
+
+                                yield _item_data
+
                                 continue
+
+                            elif _item_type == 'done':
+
+                                break
+
+                            elif _item_type == 'error':
+
+                                raise _item_data
+
+                            chunk = _item_data
+
                             if not chunk: continue
                             token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
                             if not token: continue
@@ -4022,23 +4118,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     diff_buffer = ''
                     _heartbeat_count = 0
                     try:
-                        _diff_stream = diff_llm.astream(diff_messages).__aiter__()
-                        _diff_next_task = asyncio.ensure_future(_diff_stream.__anext__())
-                        while True:
-                            done, _pending = await asyncio.wait({_diff_next_task}, timeout=3.0)
-                            if _diff_next_task in done:
-                                try:
-                                    chunk = _diff_next_task.result()
-                                except StopAsyncIteration:
-                                    break
-                                _diff_next_task = asyncio.ensure_future(_diff_stream.__anext__())
-                            else:
-                                _heartbeat_count += 1
-                                _hb_msgs = ['正在思考中...', '正在分析差异内容...', '正在生成修改方案...', '正在校验调研数据...']
-                                _hb_msg = _hb_msgs[_heartbeat_count % len(_hb_msgs)]
-                                _hb_progress = int(base_progress + 50 + min(_heartbeat_count, 20))
-                                yield await send({"type": "progress", "step": f"AI修改差异文档 {template_filename}", "message": f"{_hb_msg}（已等待 {_heartbeat_count * 3}s）", "progress": _hb_progress})
+                        async for _item_type, _item_data in astream_with_heartbeat(diff_llm, diff_messages, send, f"AI修改差异文档 {template_filename}", base_progress + 50):
+
+                            if _item_type == 'sse_str':
+
+                                yield _item_data
+
                                 continue
+
+                            elif _item_type == 'done':
+
+                                break
+
+                            elif _item_type == 'error':
+
+                                raise _item_data
+
+                            chunk = _item_data
+
                             if not chunk: continue
                             token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
                             if not token: continue
@@ -4488,25 +4585,15 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     _heartbeat_count = 0
                     buffer = ''
                     try:
-                        _stream = llm.astream(messages).__aiter__()
-                        _next_task = asyncio.ensure_future(_stream.__anext__())
-                        while True:
-                            # 用 wait + timeout，超时不取消任务（避免破坏 async generator 状态）
-                            done, _pending = await asyncio.wait({_next_task}, timeout=3.0)
-                            if _next_task in done:
-                                try:
-                                    chunk = _next_task.result()
-                                except StopAsyncIteration:
-                                    break
-                                _next_task = asyncio.ensure_future(_stream.__anext__())
-                            else:
-                                # 3 秒没新 token，发心跳让前端知道还在思考（任务继续 pending，不取消）
-                                _heartbeat_count += 1
-                                _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
-                                _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
-                                _hb_progress = int(base_progress + 10 + min(_heartbeat_count, 30))
-                                yield await send({"type": "progress", "step": f"AI分析 {filename_tmpl}", "message": _hb_msg + "（已等待 " + str(_heartbeat_count * 3) + "s）", "progress": _hb_progress})
+                        async for _item_type, _item_data in astream_with_heartbeat(llm, messages, send, f"AI分析 {filename_tmpl}", base_progress + 10):
+                            if _item_type == 'sse_str':
+                                yield _item_data
                                 continue
+                            elif _item_type == 'done':
+                                break
+                            elif _item_type == 'error':
+                                raise _item_data
+                            chunk = _item_data
                             if not chunk:
                                 continue
                             token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
