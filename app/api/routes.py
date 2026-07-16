@@ -1492,6 +1492,30 @@ def _user_agent_id(agent_id: str, username: str) -> str:
     return f"{username}_{agent_id}"
 
 
+def _extract_token(chunk):
+    """从 LangChain chunk 提取 token，兼容 GLM-5.2 thinking 模式。
+
+    GLM-5.2 thinking 模式下 chunk.content 可能是 list：
+    [{'type': 'thinking', 'thinking': '...'}, {'type': 'text', 'text': '...'}]
+    原代码 isinstance(str) 失败后 str(chunk) 把整个对象转字符串，NDJSON 全部解析失败。
+    """
+    if not hasattr(chunk, 'content') or chunk.content is None:
+        return ''
+    content = chunk.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if 'text' in item and isinstance(item['text'], str):
+                    parts.append(item['text'])
+            elif isinstance(item, str):
+                parts.append(item)
+        return ''.join(parts)
+    return str(content)
+
+
 async def astream_with_heartbeat(llm, messages, send_func, step_label, base_progress, max_progress=None, interval=3.0):
     """带心跳的 LLM 流式接收器。
 
@@ -3832,7 +3856,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             chunk = _item_data
 
                             if not chunk: continue
-                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            token = _extract_token(chunk)
                             if not token: continue
                             buffer += token
                             while '\n' in buffer:
@@ -3962,7 +3986,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                 chunk = _item_data
 
                                 if not chunk: continue
-                                token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                                token = _extract_token(chunk)
                                 if not token: continue
                                 buffer += token
                                 while '\n' in buffer:
@@ -4064,7 +4088,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             chunk = _item_data
 
                             if not chunk: continue
-                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            token = _extract_token(chunk)
                             if not token: continue
                             covered_buffer += token
                             while '\n' in covered_buffer:
@@ -4137,7 +4161,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             chunk = _item_data
 
                             if not chunk: continue
-                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            token = _extract_token(chunk)
                             if not token: continue
                             diff_buffer += token
                             while '\n' in diff_buffer:
@@ -4596,7 +4620,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                             chunk = _item_data
                             if not chunk:
                                 continue
-                            token = chunk.content if hasattr(chunk, 'content') and isinstance(chunk.content, str) else str(chunk)
+                            token = _extract_token(chunk)
                             if not token:
                                 continue
                             buffer += token
