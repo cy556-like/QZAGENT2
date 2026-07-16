@@ -46,7 +46,7 @@ from fastapi.responses import StreamingResponse, Response, FileResponse
 
 from pydantic import BaseModel
 
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 
 
 
@@ -1701,6 +1701,12 @@ def _normalize_xlsx_modification(modification):
             ('cell', sheet, coordinate), modification, mod_type,
             f"{sheet}!{coordinate}", str(modification.get('new_value'))[:60],
         )
+
+    if ext == '.xls' and (category or '').strip() in {'手册', '程序文件'}:
+        raise HTTPException(
+            status_code=400,
+            detail='旧版 .xls 不能作为手册/程序文件模板生成，请先另存为 .xlsx 后上传。',
+        )
     if mod_type == 'xlsx_global_replace':
         old = modification.get('old')
         if not isinstance(old, str) or not old or 'new' not in modification:
@@ -2501,15 +2507,23 @@ async def modify_document_api(filename: str, req: ModifyDocumentRequest, usernam
 
         try:
 
+            export_session_id = _require_owned_export_session(
+                req.session_id, username,
+            )
+
             docx_filename = filename.rsplit('.', 1)[0] + '.docx'
 
-            docx_result = export_document_as_docx(final_content, docx_filename, session_id=req.session_id or "")
+            docx_result = export_document_as_docx(
+                final_content, docx_filename, session_id=export_session_id,
+            )
 
             if docx_result["status"] == "success":
 
                 actual_docx_filename = docx_result.get('filename', docx_filename)
 
-                response_data["download_url"] = f"/api/v1/documents/export-download/{actual_docx_filename}?sid={req.session_id or ''}"
+                response_data["download_url"] = _export_download_url(
+                    actual_docx_filename, export_session_id,
+                )
 
                 response_data["docx_filename"] = actual_docx_filename
 
@@ -2635,7 +2649,9 @@ async def download_document(filename: str, agent_id: str = Query(None, descripti
 
 @router.post("/documents/export", summary="导出/生成文档为docx")
 
-async def export_document_api(req: ExportDocumentRequest):
+async def export_document_api(
+    req: ExportDocumentRequest, username: str = Depends(require_auth),
+):
 
     """
 
@@ -2647,6 +2663,8 @@ async def export_document_api(req: ExportDocumentRequest):
 
     try:
 
+        export_session_id = _require_owned_export_session(req.session_id, username)
+
         filename = req.filename or f"export_{int(time.time())}.docx"
 
         if not filename.endswith('.docx'):
@@ -2655,7 +2673,9 @@ async def export_document_api(req: ExportDocumentRequest):
 
 
 
-        result = export_document_as_docx(req.content, filename, title=req.title, session_id=req.session_id or "")
+        result = export_document_as_docx(
+            req.content, filename, title=req.title, session_id=export_session_id,
+        )
 
         if result["status"] == "success":
 
@@ -2667,7 +2687,7 @@ async def export_document_api(req: ExportDocumentRequest):
 
                 "filename": actual_filename,
 
-                "download_url": f"/api/v1/documents/export-download/{actual_filename}?sid={req.session_id or ''}",
+                "download_url": _export_download_url(actual_filename, export_session_id),
 
                 "message": result["message"],
 
@@ -2677,6 +2697,8 @@ async def export_document_api(req: ExportDocumentRequest):
 
             raise HTTPException(status_code=500, detail=result.get("message", "导出失败"))
 
+    except HTTPException:
+        raise
     except Exception as e:
 
         raise HTTPException(status_code=500, detail=f"文档导出失败: {str(e)}")
@@ -2703,7 +2725,9 @@ class ExportXlsxRequest(BaseModel):
 
 @router.post("/documents/export-xlsx", summary="导出/生成文档为xlsx")
 
-async def export_xlsx_api(req: ExportXlsxRequest):
+async def export_xlsx_api(
+    req: ExportXlsxRequest, username: str = Depends(require_auth),
+):
 
     """
 
@@ -2714,6 +2738,8 @@ async def export_xlsx_api(req: ExportXlsxRequest):
     """
 
     try:
+
+        export_session_id = _require_owned_export_session(req.session_id, username)
 
         from app.rag.document import export_document_as_xlsx
 
@@ -2727,7 +2753,9 @@ async def export_xlsx_api(req: ExportXlsxRequest):
 
 
 
-        result = export_document_as_xlsx(req.content, filename, title=req.title, session_id=req.session_id or "")
+        result = export_document_as_xlsx(
+            req.content, filename, title=req.title, session_id=export_session_id,
+        )
 
         if result["status"] == "success":
 
@@ -2739,7 +2767,7 @@ async def export_xlsx_api(req: ExportXlsxRequest):
 
                 "filename": actual_filename,
 
-                "download_url": f"/api/v1/documents/export-download/{actual_filename}?sid={req.session_id or ''}",
+                "download_url": _export_download_url(actual_filename, export_session_id),
 
                 "message": result["message"],
 
@@ -2749,6 +2777,8 @@ async def export_xlsx_api(req: ExportXlsxRequest):
 
             raise HTTPException(status_code=500, detail=result.get("message", "导出失败"))
 
+    except HTTPException:
+        raise
     except Exception as e:
 
         raise HTTPException(status_code=500, detail=f"文档导出失败: {str(e)}")
@@ -2757,9 +2787,33 @@ async def export_xlsx_api(req: ExportXlsxRequest):
 
 
 
+def _export_download_url(filename: str, session_id: str = ''):
+    """Build a URL-safe, session-scoped export download link."""
+    return (
+        f"/api/v1/documents/export-download/{quote(str(filename), safe='')}"
+        f"?sid={quote(str(session_id or ''), safe='')}"
+    )
+
+
+def _require_owned_export_session(session_id: str, username: str) -> str:
+    """Reject missing or cross-user export sessions before touching the disk."""
+    safe_session_id = str(session_id or '')
+    if (
+        not safe_session_id
+        or not safe_session_id.startswith(f"{username}_")
+        or '/' in safe_session_id
+        or '\\' in safe_session_id
+        or '..' in safe_session_id
+    ):
+        raise HTTPException(status_code=403, detail="无权访问该导出会话")
+    return safe_session_id
+
+
 @router.get("/documents/export-download/{filename}", summary="下载AI导出的文档")
 
-async def download_export_document(filename: str, sid: str = None):
+async def download_export_document(
+    filename: str, sid: str = None, username: str = Depends(require_auth),
+):
 
     """
 
@@ -2791,8 +2845,8 @@ async def download_export_document(filename: str, sid: str = None):
 
 
 
-    # sid 也做安全检查（防止路径穿越）
-    safe_sid = (sid or '').replace('/', '_').replace('\\', '_').replace('..', '_') if sid else ''
+    # 仅允许当前登录用户自己的会话目录，不能再跨会话模糊搜索。
+    safe_sid = _require_owned_export_session(sid, username)
 
     export_root = _get_export_dir()  # export 根目录
 
@@ -2808,6 +2862,9 @@ async def download_export_document(filename: str, sid: str = None):
             if os.path.exists(candidate):
                 file_path = candidate
                 logger.info(f"[导出下载] 在指定会话目录 {safe_sid}/ 中找到文件: {safe_filename}")
+
+    if file_path is None:
+        raise HTTPException(status_code=404, detail=f"导出文档 {safe_filename} 不存在")
 
 
 
@@ -3985,6 +4042,12 @@ async def external_kb_upload(file: UploadFile = File(...), category: str = Form(
     if ext not in allowed_ext:
         raise HTTPException(status_code=400, detail=f"不支持的格式: {ext}")
 
+    if ext == '.xls' and (subcategory or '').strip() in {'手册', '程序文件'}:
+        raise HTTPException(
+            status_code=400,
+            detail='旧版 .xls 不能作为手册/程序文件模板生成，请先另存为 .xlsx 后上传。',
+        )
+
     # 保存文件到外部知识库目录（按一级分类 + 二级 + 三级子目录存子目录）
     ext_doc_dir = os.path.join(settings.DOCUMENTS_DIR, "external_kb")
     if category:
@@ -4104,7 +4167,9 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
         raise HTTPException(status_code=500, detail=f"SCskill 模块未找到: {_SCSCRIPTS_DIR}")
 
     export_dir = os.path.join(settings.DATA_DIR, "export")
-    session_id_for_export = body.get("session_id", "")
+    session_id_for_export = _require_owned_export_session(
+        body.get("session_id", ""), username,
+    )
     if session_id_for_export:
         export_dir = os.path.join(export_dir, session_id_for_export)
     os.makedirs(export_dir, exist_ok=True)
@@ -4225,7 +4290,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                     close_workbook()
                             is_original = False
 
-                        download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                        download_url = _export_download_url(out_filename, session_id_for_export)
                         generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": raw_stem, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count})
                         yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": raw_stem, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False, "is_original": is_original})
                         continue
@@ -4249,7 +4314,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             raw_filename = f"{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}{raw_ext}"
                             raw_output_path = os.path.join(export_dir, raw_filename)
                             await asyncio.to_thread(shutil.copy2, str(template_path), raw_output_path)
-                            raw_download_url = f"/api/v1/documents/export-download/{raw_filename}?sid={session_id_for_export}"
+                            raw_download_url = _export_download_url(raw_filename, session_id_for_export)
                             generated_files.append({"filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "stats": {"fallback": "original_doc"}})
                             yield await send({"type": "file_complete", "filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False, "is_original": True})
                             yield await send({"type": "progress", "step": f"保留原文件 {template_filename}", "message": f"⚠️ .doc 转换失败，已原样返回 {template_filename}", "progress": end_progress})
@@ -4365,7 +4430,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             pass
                     logger.info(f"[SCskill] 手册已生成: {output_path}")
 
-                    download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                    download_url = _export_download_url(out_filename, session_id_for_export)
                     generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count})
                     yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
 
@@ -4405,7 +4470,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             raw_filename = f"{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}{raw_ext}"
                             raw_output_path = os.path.join(export_dir, raw_filename)
                             await asyncio.to_thread(shutil.copy2, str(template_path), raw_output_path)
-                            raw_download_url = f"/api/v1/documents/export-download/{raw_filename}?sid={session_id_for_export}"
+                            raw_download_url = _export_download_url(raw_filename, session_id_for_export)
                             generated_files.append({"filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "stats": {"fallback": "original_doc"}})
                             yield await send({"type": "file_complete", "filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False, "is_original": True})
                             yield await send({"type": "progress", "step": f"保留原文件 {template_filename}", "message": f"⚠️ .doc 转换失败，已原样返回 {template_filename}", "progress": end_progress})
@@ -4515,7 +4580,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             except Exception:
                                 pass
                         logger.info(f"[SCskill] 手册已生成(全质模板上修改): {output_path}")
-                        download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                        download_url = _export_download_url(out_filename, session_id_for_export)
                         generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count})
                         yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
                         continue
@@ -4698,7 +4763,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     ref_output_path = os.path.join(export_dir, ref_filename)
                     await asyncio.to_thread(ext_doc.save, ref_output_path)
                     logger.info(f"[SCskill] 补缺参考文件已生成: {ref_output_path}（删除 {deleted_count} 段、{deleted_tables} 个表格已覆盖，AI 实际修改 {diff_applied_modifications_count} 处；模型指令 {diff_modifications_count} 条）")
-                    ref_download_url = f"/api/v1/documents/export-download/{ref_filename}?sid={session_id_for_export}"
+                    ref_download_url = _export_download_url(ref_filename, session_id_for_export)
                     reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_applied_modifications_count, "requested_modifications_count": diff_modifications_count, "template_source": source_label, "template_filename": template_filename})
                     yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_applied_modifications_count, "requested_modifications_count": diff_modifications_count, "template_source": source_label + "（补缺参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
 
@@ -4892,7 +4957,9 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
     body = await request.json()
     survey_data = body.get("survey_data", {})
     current_agent_id = body.get("agent_id", "")
-    session_id_for_export = body.get("session_id", "")
+    session_id_for_export = _require_owned_export_session(
+        body.get("session_id", ""), username,
+    )
     selected_templates = body.get("selected_templates", None)  # 用户勾选的模板列表，None=全部
 
     if not survey_data:
@@ -5101,7 +5168,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                                     close_workbook()
                             is_original = False
 
-                        download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                        download_url = _export_download_url(out_filename, session_id_for_export)
                         template_source_text = f"基于【{source_label}】Excel 模板生成\n部门：{dept}\n模板：{filename_tmpl}\n实际修改：{applied_modifications_count} 处（模型指令 {modifications_count} 条）"
                         generated_files.append({"filename": out_filename, "download_url": download_url, "dept": dept, "display_name": raw_stem, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count, "template_source_text": template_source_text})
                         yield await send({"type": "file_complete", "dept": dept, "display_name": raw_stem, "filename": out_filename, "download_url": download_url, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": filename_tmpl, "progress": end_progress, "is_original": is_original})
@@ -5126,7 +5193,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                             raw_filename = f"{safe_dept_for_raw}_{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}{raw_ext}"
                             raw_output_path = os.path.join(export_dir, raw_filename)
                             await asyncio.to_thread(shutil.copy2, str(tmpl['path']), raw_output_path)
-                            raw_download_url = f"/api/v1/documents/export-download/{raw_filename}?sid={session_id_for_export}"
+                            raw_download_url = _export_download_url(raw_filename, session_id_for_export)
                             generated_files.append({"filename": raw_filename, "download_url": raw_download_url, "dept": dept, "display_name": raw_stem, "modifications_count": 0, "stats": {"fallback": "original_doc"}, "template_source_text": f"基于【{source_label}】原始 .doc 返回"})
                             yield await send({"type": "file_complete", "dept": dept, "display_name": raw_stem, "filename": raw_filename, "download_url": raw_download_url, "modifications_count": 0, "template_source": source_label, "template_filename": filename_tmpl, "progress": end_progress, "is_original": True})
                             yield await send({"type": "progress", "step": f"保留原文件 {dept}", "message": f"⚠️ {dept}/{filename_tmpl} .doc 转换失败，已原样返回", "progress": end_progress})
@@ -5276,7 +5343,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                             pass
                     logger.info(f"[CXskill] 程序文件已生成: {output_path}")
 
-                    download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                    download_url = _export_download_url(out_filename, session_id_for_export)
                     template_source_text = f"基于【{source_label}】模板生成\n部门：{dept}\n模板：{filename_tmpl}\n实际修改：{applied_modifications_count} 处（模型指令 {modifications_count} 条）"
 
                     generated_files.append({
