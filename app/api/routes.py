@@ -4102,9 +4102,9 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                     cov_obj = _json.loads(line)
                                     indices = cov_obj.get('indices', [])
                                     if isinstance(indices, list):
-                                        covered_indices.extend(int(i) for i in indices if isinstance(i, (int, str)) and str(i).isdigit())
+                                        covered_indices.extend(int(float(i)) for i in indices if isinstance(i, (int, float, str)) and str(i).replace('.', '').isdigit())
                                         reason = cov_obj.get('reason', '')[:60]
-                                        yield await send({"type": "progress", "step": f"识别已覆盖", "message": f"{reason}（{len(indices)} 段）", "progress": int(base_progress + 15 + len(covered_indices) * 2)})
+                                        yield await send({"type": "progress", "step": f"识别已覆盖", "message": f"{reason}（{len(indices)} 段）", "progress": min(int(base_progress + 15 + len(covered_indices) * 2), base_progress + 38)})
                                 except: continue
                     except Exception as cov_err:
                         logger.warning(f"[SCskill] {template_filename} 覆盖识别异常: {cov_err}")
