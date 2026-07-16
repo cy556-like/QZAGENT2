@@ -1687,6 +1687,108 @@ def _xlsx_applied_modification_count(stats):
     ))
 
 
+def _normalize_xlsx_modification(modification):
+    """Validate one XLSX directive and return its deduplication metadata."""
+    if not isinstance(modification, dict):
+        return None
+    mod_type = modification.get('type')
+    if mod_type == 'xlsx_cell':
+        sheet = str(modification.get('sheet') or '')
+        coordinate = str(modification.get('cell') or '').upper()
+        if not sheet or not coordinate or 'new_value' not in modification:
+            return None
+        return (
+            ('cell', sheet, coordinate), modification, mod_type,
+            f"{sheet}!{coordinate}", str(modification.get('new_value'))[:60],
+        )
+    if mod_type == 'xlsx_global_replace':
+        old = modification.get('old')
+        if not isinstance(old, str) or not old or 'new' not in modification:
+            return None
+        return (
+            ('global', old, str(modification.get('new'))), modification, mod_type,
+            'entire workbook', f"'{old}' -> '{modification.get('new')}'"[:60],
+        )
+    return None
+
+
+def _xlsx_survey_fallback_modifications(module, workbook, survey_data):
+    """Create safe XLSX edits for unambiguous values supplied by the survey.
+
+    The model still handles context-dependent business changes.  These edits
+    only protect clear file-code prefixes and selected certification versions
+    when a model response is empty or its final NDJSON line is malformed.
+    """
+    import re
+
+    survey = survey_data if isinstance(survey_data, dict) else {}
+    company_name = str(survey.get('sv_company_name') or '').strip()
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', company_name)
+    company_short = ''.join(chinese_chars[:4]) if len(chinese_chars) >= 2 else ''
+
+    raw_certs = survey.get('sv_certs') or []
+    if isinstance(raw_certs, str):
+        raw_certs = [raw_certs]
+    elif not isinstance(raw_certs, (list, tuple, set)):
+        raw_certs = []
+    cert_other = str(survey.get('sv_cert_other') or '').strip()
+    if cert_other:
+        raw_certs = [*raw_certs, cert_other]
+
+    cert_targets = {}
+    for raw_cert in raw_certs:
+        text = str(raw_cert or '').strip()
+        compact = re.sub(r'\s+', '', text).upper()
+        if 'ISO9001' in compact:
+            match = re.search(r'ISO\s*9001\s*[:：-]?\s*(20\d{2})', text, re.I)
+            cert_targets['ISO9001'] = f"ISO9001:{match.group(1) if match else '2015'}"
+        if 'IATF16949' in compact:
+            match = re.search(r'IATF\s*16949\s*[:：-]?\s*(20\d{2})', text, re.I)
+            cert_targets['IATF16949'] = f"IATF16949:{match.group(1) if match else '2016'}"
+
+    document_code = re.compile(
+        r'(?<![A-Za-z0-9])([A-Za-z]{1,8})-'
+        r'((?:(?:[A-Za-z]{1,8})-)?(?:QM|XZ|QP|CX|GL|QG|JS|SC|QA|QMS|EMS|OHS)'
+        r'-\d+(?:-\d+){0,3})(?![A-Za-z0-9])'
+    )
+    standard_patterns = (
+        ('ISO9001', re.compile(r'ISO\s*9001\s*[:：-]?\s*(20\d{2})', re.I)),
+        ('IATF16949', re.compile(r'IATF\s*16949\s*[:：-]?\s*(20\d{2})', re.I)),
+    )
+
+    modifications = []
+    for worksheet in workbook.worksheets:
+        for cell in module._iter_existing_xlsx_cells(worksheet):
+            if module._is_formula_cell(cell) or not isinstance(cell.value, str):
+                continue
+            original = cell.value
+            new_value = original
+            if company_short:
+                new_value = document_code.sub(
+                    lambda match: match.group(0) if match.group(1) == company_short
+                    else f"{company_short}-{match.group(2)}",
+                    new_value,
+                )
+            for standard_name, pattern in standard_patterns:
+                target = cert_targets.get(standard_name)
+                if not target:
+                    continue
+                target_year = target.rsplit(':', 1)[-1]
+                new_value = pattern.sub(
+                    lambda match: match.group(0) if match.group(1) == target_year else target,
+                    new_value,
+                )
+            if new_value != original:
+                modifications.append({
+                    'type': 'xlsx_cell',
+                    'sheet': worksheet.title,
+                    'cell': cell.coordinate,
+                    'new_value': new_value,
+                    'reason': 'survey-supplied file-code or certification version',
+                })
+    return modifications
+
+
 async def modify_xlsx_with_heartbeat(
     module, xlsx_path, survey_text, survey_data, template_filename,
     send_func, step_label, base_progress, current_model,
@@ -1708,16 +1810,42 @@ async def modify_xlsx_with_heartbeat(
         chunks = await asyncio.to_thread(module.build_xlsx_overview_chunks, workbook)
         modifications = []
         seen = set()
+        fallback_count = 0
+        for candidate in _xlsx_survey_fallback_modifications(
+            module, workbook, survey_data,
+        ):
+            normalized = _normalize_xlsx_modification(candidate)
+            if not normalized:
+                continue
+            key, modification, mod_type, location, preview = normalized
+            if key in seen:
+                continue
+            seen.add(key)
+            modifications.append(modification)
+            fallback_count += 1
+            yield ('sse_str', await send_func({
+                'type': 'modification',
+                'mod_type': mod_type,
+                'location': location,
+                'reason': str(modification.get('reason') or '')[:60],
+                'preview': preview,
+                'progress': base_progress,
+                'index': len(modifications),
+            }))
         total_chunks = max(len(chunks), 1)
 
         if not chunks:
+            stats = await asyncio.to_thread(
+                module.apply_xlsx_modifications, workbook, modifications,
+            )
+            logger.info(
+                "[XLSX] %s: AI directives=0, fallback=%d, applied=%d",
+                template_filename, fallback_count, _xlsx_applied_modification_count(stats),
+            )
             yield ('result', {
                 'workbook': workbook,
-                'stats': {
-                    'xlsx_cell': 0, 'xlsx_global_replace': 0,
-                    'unknown': 0, 'failed': 0,
-                },
-                'requested_modifications_count': 0,
+                'stats': stats,
+                'requested_modifications_count': len(modifications),
                 'overview_text': '',
             })
             return
@@ -1792,8 +1920,35 @@ async def modify_xlsx_with_heartbeat(
                         'index': len(modifications),
                     }))
 
+            # A provider can finish its final JSON object without a newline.
+            # Parse that remaining buffer instead of silently dropping it.
+            tail = buffer.strip()
+            if tail and tail != '===END===':
+                normalized = _normalize_xlsx_modification(
+                    module.parse_ndjson_line(tail),
+                )
+                if normalized:
+                    key, modification, mod_type, location, preview = normalized
+                    if key not in seen:
+                        seen.add(key)
+                        modifications.append(modification)
+                        yield ('sse_str', await send_func({
+                            'type': 'modification',
+                            'mod_type': mod_type,
+                            'location': location,
+                            'reason': str(modification.get('reason') or '')[:60],
+                            'preview': preview,
+                            'progress': min(chunk_progress + 6, base_progress + 22),
+                            'index': len(modifications),
+                        }))
+
         stats = await asyncio.to_thread(
             module.apply_xlsx_modifications, workbook, modifications,
+        )
+        logger.info(
+            "[XLSX] %s: fallback=%d, directives=%d, applied=%d",
+            template_filename, fallback_count, len(modifications),
+            _xlsx_applied_modification_count(stats),
         )
         yield ('result', {
             'workbook': workbook,
