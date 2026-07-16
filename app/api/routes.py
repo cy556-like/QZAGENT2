@@ -1561,11 +1561,13 @@ async def astream_with_heartbeat(llm, messages, send_func, step_label, base_prog
     _heartbeat_msgs = ['正在思考中...', '正在分析模板结构...', '正在生成修改方案...', '正在比对调研数据...', '正在校验内容...']
     _queue = asyncio.Queue()
     _llm_done = False
+    _first_chunk_received = False  # [Bug 修复] 收到第一个 chunk 后停止心跳
 
     async def _llm_producer():
-        nonlocal _llm_done
+        nonlocal _llm_done, _first_chunk_received
         try:
             async for chunk in llm.astream(messages):
+                _first_chunk_received = True  # 标记已开始输出，停止心跳
                 await _queue.put(('chunk', chunk))
         except Exception as e:
             await _queue.put(('error', e))
@@ -1575,9 +1577,9 @@ async def astream_with_heartbeat(llm, messages, send_func, step_label, base_prog
 
     async def _heartbeat_producer():
         nonlocal _heartbeat_count
-        while not _llm_done:
+        while not _llm_done and not _first_chunk_received:
             await asyncio.sleep(interval)
-            if _llm_done:
+            if _llm_done or _first_chunk_received:
                 break
             _heartbeat_count += 1
             _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
