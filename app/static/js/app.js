@@ -2291,7 +2291,7 @@ async function downloadExportFile(url) {
     try {
         // [修复 v2] URL 完整性校验：防止流式渲染时点击到残缺 URL
         // 合法的导出 URL 必须以 /api/v1/documents/export-download/ 开头，且以文件扩展名结尾
-        const validUrlPattern = /^\/api\/v1\/documents\/export-download\/[^]+\.(docx|xlsx|pdf|txt)(\?[^]*)?$/i;
+        const validUrlPattern = /^\/api\/v1\/documents\/export-download\/[^]+\.(doc|docx|xlsx|pdf|txt)(\?[^]*)?$/i;
         if (!validUrlPattern.test(url)) {
             console.warn('下载URL不完整或格式错误:', url);
             showToast('文件链接尚未生成完毕，请稍候 1-2 秒后再试', 3000);
@@ -2309,7 +2309,7 @@ async function downloadExportFile(url) {
         // 根据URL中的扩展名决定默认文件名（去除 ?sid=xxx 等查询参数后再提取）
         const urlNoQuery = url.split('?')[0];
         const urlExt = urlNoQuery.split('.').pop().toLowerCase();
-        const defaultNames = { docx: '导出文档.docx', xlsx: '导出表格.xlsx', pdf: '导出文档.pdf', txt: '导出文本.txt' };
+        const defaultNames = { doc: '导出文档.doc', docx: '导出文档.docx', xlsx: '导出表格.xlsx', pdf: '导出文档.pdf', txt: '导出文本.txt' };
         let filename = defaultNames[urlExt] || '导出文档.docx';
         if (disposition) {
             const utf8Match = disposition.match(/filename\*=UTF-8''(.+)/i);
@@ -2341,6 +2341,14 @@ async function downloadExportFile(url) {
         window.open(url, '_blank');
     }
 }
+
+// 生成结果下载必须经过 fetch，以携带 JWT；不能把无鉴权导出链接直接暴露给浏览器。
+document.addEventListener('click', function(event) {
+    const link = event.target.closest('a[data-export-download]');
+    if (!link) return;
+    event.preventDefault();
+    downloadExportFile(link.dataset.exportDownload || '');
+});
 
 // ===== Send Message =====
 async function sendMessage() {
@@ -2505,13 +2513,13 @@ function addMessageToUI(role, content, imageBase64) {
                 deptOrder.forEach(dept => {
                     downloadHtml += `<div style="margin:14px 0 4px;font-weight:bold;color:#15589B;border-left:3px solid #15589B;padding-left:8px;font-size:14px;">${escapeHtml(dept)}</div>`;
                     deptGroups[dept].forEach(f => {
-                        downloadHtml += `<div style="margin:6px 0 6px 16px;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename || f.dept)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                        downloadHtml += `<div style="margin:6px 0 6px 16px;"><a href="#" data-export-download="${escapeHtml(f.download_url || '')}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename || f.dept)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
                     });
                 });
             } else {
                 // manual_file 或其他：直接列出
                 downloadInfo.files.forEach(f => {
-                    downloadHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                    downloadHtml += `<div style="margin:6px 0;"><a href="#" data-export-download="${escapeHtml(f.download_url || '')}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
                 });
             }
             downloadHtml += '</div>';
@@ -2524,7 +2532,7 @@ function addMessageToUI(role, content, imageBase64) {
             let refHtml = '<div style="margin-top:14px;padding:10px;background:#f8f9fa;border-radius:8px;border-left:3px solid #6c757d;">';
             refHtml += '<div style="color:#495057;font-size:13px;font-weight:600;margin-bottom:6px;">补缺参考文件（全质模板中包含、但用户上传手册未覆盖的章节）</div>';
             referenceInfo.files.forEach(f => {
-                refHtml += `<div style="margin:6px 0;"><a href="${f.download_url}" class="doc-download-btn" style="display:inline-block;padding:8px 16px;background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;font-weight:500;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename)}</a></div>`;
+                refHtml += `<div style="margin:6px 0;"><a href="#" data-export-download="${escapeHtml(f.download_url || '')}" class="doc-download-btn" style="display:inline-block;padding:8px 16px;background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;font-weight:500;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename)}</a></div>`;
             });
             refHtml += '</div>';
             const refDiv = document.createElement('div');
@@ -4509,7 +4517,7 @@ function generateDocument(type) {
                                 downloadBtnsHtml = files.map(f => {
                                     const dlUrl = f.download_url || '';
                                     const dlName = f.display_name || f.filename || '下载文件';
-                                    return `<a href="${dlUrl}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;margin:4px 6px;">下载 ${dlName}</a>`;
+                                    return `<a href="#" data-export-download="${escapeHtml(dlUrl)}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:10px 20px;background:#15589B;color:#fff;text-decoration:none;border-radius:8px;font-weight:bold;margin:4px 6px;">下载 ${escapeHtml(dlName)}</a>`;
                                 }).join('');
                             } else {
                                 downloadBtnsHtml = '<p style="color:#e63946;">未生成任何手册文件，请重试或检查模板是否上传</p>';
@@ -4521,7 +4529,7 @@ function generateDocument(type) {
                                 const refBtns = referenceFiles.map(f => {
                                     const dlUrl = f.download_url || '';
                                     const dlName = f.display_name || f.filename || '补缺参考文件';
-                                    return `<a href="${dlUrl}" class="doc-download-btn" style="display:inline-block;padding:8px 16px;background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;font-weight:500;margin:4px 6px;font-size:13px;">下载 ${dlName}</a>`;
+                                    return `<a href="#" data-export-download="${escapeHtml(dlUrl)}" class="doc-download-btn" style="display:inline-block;padding:8px 16px;background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;font-weight:500;margin:4px 6px;font-size:13px;">下载 ${escapeHtml(dlName)}</a>`;
                                 }).join('');
                                 referenceBtnsHtml = `
                                     <div style="margin-top:14px;padding:10px;background:#f8f9fa;border-radius:8px;border-left:3px solid #6c757d;">
@@ -4733,7 +4741,7 @@ function generateDocument(type) {
                             deptOrder.forEach(dept => {
                                 downloadHtml += `<div style="margin:14px 0 4px;font-weight:bold;color:#15589B;border-left:3px solid #15589B;padding-left:8px;font-size:14px;">${escapeHtml(dept)}</div>`;
                                 deptGroups[dept].forEach(f => {
-                                    downloadHtml += `<div style="margin:6px 0 6px 16px;"><a href="${f.download_url}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename || f.dept)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
+                                    downloadHtml += `<div style="margin:6px 0 6px 16px;"><a href="#" data-export-download="${escapeHtml(f.download_url || '')}" class="doc-download-btn xlsx-btn" style="display:inline-block;padding:8px 16px;background:#15589B;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;">下载 ${escapeHtml(f.display_name || f.filename || f.dept)}</a> <span style="color:#666;font-size:12px;">${f.modifications_count} 处修改</span></div>`;
                                 });
                             });
                             // 失败文件也按部门分组显示
