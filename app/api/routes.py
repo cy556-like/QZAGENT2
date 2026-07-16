@@ -34,6 +34,8 @@ import base64
 
 import logging
 
+import uuid
+
 from typing import Optional
 
 
@@ -1499,6 +1501,10 @@ def _extract_token(chunk):
     [{'type': 'thinking', 'thinking': '...'}, {'type': 'text', 'text': '...'}]
     原代码 isinstance(str) 失败后 str(chunk) 把整个对象转字符串，NDJSON 全部解析失败。
     """
+    # The stream helper emits a final newline string to flush a valid NDJSON
+    # record that a provider ended without a trailing newline.
+    if isinstance(chunk, str):
+        return chunk
     if not hasattr(chunk, 'content') or chunk.content is None:
         return ''
     content = chunk.content
@@ -1565,14 +1571,20 @@ async def astream_with_heartbeat(llm, messages, send_func, step_label, base_prog
 
     async def _llm_producer():
         nonlocal _llm_done, _first_chunk_received
+        completed_normally = False
         try:
             async for chunk in llm.astream(messages):
                 _first_chunk_received = True  # 标记已开始输出，停止心跳
                 await _queue.put(('chunk', chunk))
+            completed_normally = True
         except Exception as e:
             await _queue.put(('error', e))
         finally:
             _llm_done = True
+            # Callers parse NDJSON only after a newline.  Flush a final
+            # complete JSON record when a provider omits its trailing newline.
+            if completed_normally:
+                await _queue.put(('chunk', '\n'))
             await _queue.put(('done', None))
 
     async def _heartbeat_producer():
@@ -1625,6 +1637,63 @@ async def astream_with_heartbeat(llm, messages, send_func, step_label, base_prog
                 await _llm_task
             except (asyncio.CancelledError, Exception):
                 pass
+
+
+async def convert_with_heartbeat(convert_func, doc_path, send_func, step_label, base_progress, interval=5.0):
+    """Convert a legacy document while continuously producing SSE progress.
+
+    The conversion result is emitted as a separate event.  This deliberately
+    avoids returning a value from an async generator, which Python forbids.
+    """
+    task = asyncio.create_task(asyncio.to_thread(convert_func, doc_path))
+    elapsed = 0
+    try:
+        while True:
+            try:
+                converted = await asyncio.wait_for(asyncio.shield(task), timeout=interval)
+                yield ('result', converted)
+                return
+            except asyncio.TimeoutError:
+                elapsed += interval
+                event = {
+                    "type": "progress",
+                    "step": step_label,
+                    "message": f"正在转换文档格式…（已等待 {int(elapsed)}s）",
+                    "progress": min(int(base_progress + elapsed // interval), int(base_progress + 15)),
+                }
+                yield ('sse_str', await send_func(event))
+            except Exception as exc:
+                logger.warning(f"文档转换异常 {doc_path}: {exc}")
+                yield ('result', None)
+                return
+    finally:
+        # ``to_thread`` itself is not force-cancelled here: the converter owns
+        # only its private LibreOffice profile and must not kill another job.
+        if not task.done():
+            task.cancel()
+
+
+def _applied_modification_count(stats):
+    """Return actual document changes, not merely directives emitted by a model."""
+    return sum(int(stats.get(key, 0) or 0) for key in (
+        'paragraph', 'table_cell', 'global_replace', 'header_replace',
+    ))
+
+
+def _apply_deferred_replacements(doc, replacements, apply_modifications, stats):
+    """Apply streamed global/header replacements in their safe final order.
+
+    The LLM stream may emit ``AAA`` before ``AAA企业``.  Applying each item as
+    it arrives corrupts the longer value before the later directive sees it.
+    The skill-level ``apply_modifications`` function owns the ordering logic;
+    this route helper merges its actual results into the per-file statistics.
+    """
+    if not replacements:
+        return 0
+    replacement_stats = apply_modifications(doc, replacements)
+    for key, value in replacement_stats.items():
+        stats[key] = int(stats.get(key, 0) or 0) + int(value or 0)
+    return _applied_modification_count(replacement_stats)
 
 
 @router.get("/kb/categories", summary="列出所有一级分类")
@@ -2235,6 +2304,8 @@ async def download_document(filename: str, agent_id: str = Query(None, descripti
 
     mime_map = {
 
+        ".doc": "application/msword",
+
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2618,6 +2689,8 @@ async def download_export_document(filename: str, sid: str = None):
     ext = os.path.splitext(safe_filename)[1].lower()
 
     mime_map = {
+
+        ".doc": "application/msword",
 
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 
@@ -3795,6 +3868,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             company_name = (survey_data.get('sv_company_name') or '企业').strip()
             safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
             today_str = datetime.now().strftime("%Y%m%d")
+            generation_id = uuid.uuid4().hex[:10]
             generated_files = []  # 主文件（AI 修改后的手册）
             reference_files = []  # 补缺参考文件（仅含用户手册未覆盖的章节）
             failed_files = []
@@ -3828,9 +3902,27 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 try:
                     actual_template = template_path
                     if need_convert:
-                        converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
+                        converted = None
+                        async for _conversion_type, _conversion_data in convert_with_heartbeat(
+                            gm.convert_doc_to_docx, template_path, send,
+                            f"转换 {template_filename}", base_progress,
+                        ):
+                            if _conversion_type == 'sse_str':
+                                yield _conversion_data
+                            else:
+                                converted = _conversion_data
                         if not converted:
-                            failed_files.append({"filename": template_filename, "reason": "doc转换失败"})
+                            # A legacy document must still be downloadable even
+                            # if this host cannot convert it for AI editing.
+                            raw_stem = _re.sub(r'[\\/:*?"<>|]', '_', os.path.splitext(template_filename)[0]).strip() or '质量管理手册'
+                            raw_ext = os.path.splitext(template_filename)[1].lower() or '.doc'
+                            raw_filename = f"{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}{raw_ext}"
+                            raw_output_path = os.path.join(export_dir, raw_filename)
+                            await asyncio.to_thread(shutil.copy2, str(template_path), raw_output_path)
+                            raw_download_url = f"/api/v1/documents/export-download/{raw_filename}?sid={session_id_for_export}"
+                            generated_files.append({"filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "stats": {"fallback": "original_doc"}})
+                            yield await send({"type": "file_complete", "filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False, "is_original": True})
+                            yield await send({"type": "progress", "step": f"保留原文件 {template_filename}", "message": f"⚠️ .doc 转换失败，已原样返回 {template_filename}", "progress": end_progress})
                             continue
                         actual_template = converted
 
@@ -3848,6 +3940,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     llm = create_llm(deep_think=True, model_override=current_model)
                     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
                     stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0, 'header_replace': 0, 'unknown': 0, 'failed': 0}
+                    deferred_replacements = []
                     modifications_count = 0
                     _heartbeat_count = 0
                     buffer = ''
@@ -3901,22 +3994,27 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                         else: stats['failed'] += 1
                                         yield await send({"type": "modification", "mod_type": "table_cell", "location": f"T{ti2}.R{ri}.C{ci2}", "reason": reason, "preview": (new_text[:60] + '...' if len(new_text) > 60 else new_text), "progress": progress, "index": modifications_count})
                                     elif mod_type == 'global_replace':
-                                        old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_global_replace(doc, old, new)
-                                        stats['global_replace'] += n
-                                        yield await send({"type": "modification", "mod_type": "global_replace", "location": "全文", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                        old = mod.get('old', ''); new = mod.get('new', '')
+                                        deferred_replacements.append({'type': 'global_replace', 'old': old, 'new': new})
+                                        yield await send({"type": "modification", "mod_type": "global_replace", "location": "全文", "reason": reason, "preview": f"'{old}' → '{new}'（待统一应用）", "progress": progress, "index": modifications_count})
                                     elif mod_type == 'header_replace':
-                                        old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_header_replace(doc, old, new)
-                                        stats['header_replace'] += n
-                                        yield await send({"type": "modification", "mod_type": "header_replace", "location": "页眉/页脚", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                        old = mod.get('old', ''); new = mod.get('new', '')
+                                        deferred_replacements.append({'type': 'header_replace', 'old': old, 'new': new})
+                                        yield await send({"type": "modification", "mod_type": "header_replace", "location": "页眉/页脚", "reason": reason, "preview": f"'{old}' → '{new}'（待统一应用）", "progress": progress, "index": modifications_count})
                                     else: stats['unknown'] += 1
                                 except: stats['failed'] += 1
                     except Exception as stream_err:
                         logger.warning(f"[SCskill] {template_filename} LLM异常: {stream_err}")
 
-                    if modifications_count == 0:
+                    if deferred_replacements:
+                        yield await send({"type": "progress", "step": f"应用替换 {template_filename}", "message": f"正在按安全顺序应用 {len(deferred_replacements)} 条全文/页眉页脚替换...", "progress": min(end_progress - 1, base_progress + 25)})
+                        _apply_deferred_replacements(doc, deferred_replacements, gm.apply_modifications, stats)
+
+                    applied_modifications_count = _applied_modification_count(stats)
+                    if applied_modifications_count == 0:
                         # [Bug 修复] AI 没生成修改方案时，不跳过，原样保存文件返回给用户
                         # 用户上传的文件即使不需要修改，也应该返回给用户（保持文件集完整）
-                        logger.info(f"[SCskill] {template_filename}: AI未生成修改方案，原样保存")
+                        logger.info(f"[SCskill] {template_filename}: 无有效修改，原样保存（模型指令 {modifications_count} 条，失败 {stats['failed']} 条）")
 
                     tmpl_base = os.path.splitext(template_filename)[0]
                     tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
@@ -3924,9 +4022,9 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
                     tmpl_clean = tmpl_clean.strip() or '质量管理手册'
                     safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
-                    out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                    out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}.docx"
                     output_path = os.path.join(export_dir, out_filename)
-                    gm.remove_even_page_headers_footers(doc)
+                    # Preserve valid odd/even page header and footer layout.
                     await asyncio.to_thread(doc.save, output_path)
                     # 清理 doc 转换产生的临时目录
                     if need_convert and converted:
@@ -3938,8 +4036,8 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     logger.info(f"[SCskill] 手册已生成: {output_path}")
 
                     download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
-                    generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "stats": stats})
-                    yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
+                    generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count})
+                    yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
 
                 except Exception as e:
                     logger.exception(f"[SCskill] {template_filename} 生成异常: {e}")
@@ -3962,9 +4060,25 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 try:
                     actual_template = template_path
                     if need_convert:
-                        converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
+                        converted = None
+                        async for _conversion_type, _conversion_data in convert_with_heartbeat(
+                            gm.convert_doc_to_docx, template_path, send,
+                            f"转换 {template_filename}", base_progress,
+                        ):
+                            if _conversion_type == 'sse_str':
+                                yield _conversion_data
+                            else:
+                                converted = _conversion_data
                         if not converted:
-                            failed_files.append({"filename": template_filename, "reason": "doc转换失败"})
+                            raw_stem = _re.sub(r'[\\/:*?"<>|]', '_', os.path.splitext(template_filename)[0]).strip() or '质量管理手册'
+                            raw_ext = os.path.splitext(template_filename)[1].lower() or '.doc'
+                            raw_filename = f"{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}{raw_ext}"
+                            raw_output_path = os.path.join(export_dir, raw_filename)
+                            await asyncio.to_thread(shutil.copy2, str(template_path), raw_output_path)
+                            raw_download_url = f"/api/v1/documents/export-download/{raw_filename}?sid={session_id_for_export}"
+                            generated_files.append({"filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "stats": {"fallback": "original_doc"}})
+                            yield await send({"type": "file_complete", "filename": raw_filename, "download_url": raw_download_url, "display_name": raw_stem, "modifications_count": 0, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False, "is_original": True})
+                            yield await send({"type": "progress", "step": f"保留原文件 {template_filename}", "message": f"⚠️ .doc 转换失败，已原样返回 {template_filename}", "progress": end_progress})
                             continue
                         actual_template = converted
 
@@ -3979,6 +4093,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         llm = create_llm(deep_think=True, model_override=current_model)
                         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
                         stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0, 'header_replace': 0, 'unknown': 0, 'failed': 0}
+                        deferred_replacements = []
                         modifications_count = 0
                         _heartbeat_count = 0
                         buffer = ''
@@ -4032,21 +4147,26 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                             else: stats['failed'] += 1
                                             yield await send({"type": "modification", "mod_type": "table_cell", "location": f"T{ti2}.R{ri}.C{ci2}", "reason": reason, "preview": (new_text[:60] + '...' if len(new_text) > 60 else new_text), "progress": progress, "index": modifications_count})
                                         elif mod_type == 'global_replace':
-                                            old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_global_replace(doc, old, new)
-                                            stats['global_replace'] += n
-                                            yield await send({"type": "modification", "mod_type": "global_replace", "location": "全文", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                            old = mod.get('old', ''); new = mod.get('new', '')
+                                            deferred_replacements.append({'type': 'global_replace', 'old': old, 'new': new})
+                                            yield await send({"type": "modification", "mod_type": "global_replace", "location": "全文", "reason": reason, "preview": f"'{old}' → '{new}'（待统一应用）", "progress": progress, "index": modifications_count})
                                         elif mod_type == 'header_replace':
-                                            old = mod.get('old', ''); new = mod.get('new', ''); n = gm.apply_header_replace(doc, old, new)
-                                            stats['header_replace'] += n
-                                            yield await send({"type": "modification", "mod_type": "header_replace", "location": "页眉/页脚", "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）", "progress": progress, "index": modifications_count})
+                                            old = mod.get('old', ''); new = mod.get('new', '')
+                                            deferred_replacements.append({'type': 'header_replace', 'old': old, 'new': new})
+                                            yield await send({"type": "modification", "mod_type": "header_replace", "location": "页眉/页脚", "reason": reason, "preview": f"'{old}' → '{new}'（待统一应用）", "progress": progress, "index": modifications_count})
                                         else: stats['unknown'] += 1
                                     except: stats['failed'] += 1
                         except Exception as stream_err:
                             logger.warning(f"[SCskill] {template_filename} LLM异常: {stream_err}")
 
-                        if modifications_count == 0:
+                        if deferred_replacements:
+                            yield await send({"type": "progress", "step": f"应用替换 {template_filename}", "message": f"正在按安全顺序应用 {len(deferred_replacements)} 条全文/页眉页脚替换...", "progress": min(end_progress - 1, base_progress + 25)})
+                            _apply_deferred_replacements(doc, deferred_replacements, gm.apply_modifications, stats)
+
+                        applied_modifications_count = _applied_modification_count(stats)
+                        if applied_modifications_count == 0:
                             # [Bug 修复] AI 没生成修改方案时，不跳过，原样保存文件返回给用户
-                            logger.info(f"[SCskill] {template_filename}: AI未生成修改方案，原样保存")
+                            logger.info(f"[SCskill] {template_filename}: 无有效修改，原样保存（模型指令 {modifications_count} 条，失败 {stats['failed']} 条）")
 
                         tmpl_base = os.path.splitext(template_filename)[0]
                         tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
@@ -4054,9 +4174,9 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
                         tmpl_clean = tmpl_clean.strip() or '质量管理手册'
                         safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
-                        out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                        out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}.docx"
                         output_path = os.path.join(export_dir, out_filename)
-                        gm.remove_even_page_headers_footers(doc)
+                        # Preserve valid odd/even page header and footer layout.
                         await asyncio.to_thread(doc.save, output_path)
                         if need_convert and converted:
                             try:
@@ -4066,8 +4186,8 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                 pass
                         logger.info(f"[SCskill] 手册已生成(全质模板上修改): {output_path}")
                         download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
-                        generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "stats": stats})
-                        yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
+                        generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count})
+                        yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": tmpl_clean, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False})
                         continue
 
                     # 分支 B：用户已上传手册 → 提取已覆盖段落 → 从全质模板删除 → AI 修改调研信息 → 补缺参考文件
@@ -4077,11 +4197,12 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     ext_overview = await asyncio.to_thread(gm.extract_template_overview, ext_doc)
                     ext_overview_text = gm.format_overview_for_llm(ext_overview)
 
-                    # 步骤 1：调 AI 识别「用户已覆盖」的段落索引
+                    # 步骤 1：调 AI 识别「用户已覆盖」的段落和表格索引
                     covered_system, covered_user = gm.build_covered_prompt(ext_overview_text, user_manual_sections_text, template_filename)
                     covered_llm = create_llm(deep_think=True, model_override=current_model)
                     covered_messages = [SystemMessage(content=covered_system), HumanMessage(content=covered_user)]
                     covered_indices = []
+                    covered_table_indices = []
                     covered_buffer = ''
                     _heartbeat_count = 0
                     try:
@@ -4116,11 +4237,15 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                 if not line.startswith('{') or not line.endswith('}'): continue
                                 try:
                                     cov_obj = _json.loads(line)
-                                    indices = cov_obj.get('indices', [])
-                                    if isinstance(indices, list):
-                                        covered_indices.extend(int(float(i)) for i in indices if isinstance(i, (int, float, str)) and str(i).replace('.', '').isdigit())
-                                        reason = cov_obj.get('reason', '')[:60]
-                                        yield await send({"type": "progress", "step": f"识别已覆盖", "message": f"{reason}（{len(indices)} 段）", "progress": min(int(base_progress + 15 + len(covered_indices) * 2), base_progress + 38)})
+                                    paragraph_indices = cov_obj.get('paragraph_indices', cov_obj.get('indices', []))
+                                    table_indices = cov_obj.get('table_indices', [])
+                                    if isinstance(paragraph_indices, list):
+                                        covered_indices.extend(int(float(i)) for i in paragraph_indices if isinstance(i, (int, float, str)) and str(i).replace('.', '').isdigit())
+                                    if isinstance(table_indices, list):
+                                        covered_table_indices.extend(int(float(i)) for i in table_indices if isinstance(i, (int, float, str)) and str(i).replace('.', '').isdigit())
+                                    reason = cov_obj.get('reason', '')[:60]
+                                    covered_count = len(set(covered_indices)) + len(set(covered_table_indices))
+                                    yield await send({"type": "progress", "step": f"识别已覆盖", "message": f"{reason}（{len(set(covered_indices))} 段、{len(set(covered_table_indices))} 个表格）", "progress": min(int(base_progress + 15 + covered_count * 2), base_progress + 38)})
                                 except: continue
                     except Exception as cov_err:
                         logger.warning(f"[SCskill] {template_filename} 覆盖识别异常: {cov_err}")
@@ -4133,18 +4258,24 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         except Exception:
                             pass
 
-                    # 步骤 2：判断是否需要生成补缺参考文件
-                    total_ext_paras = len(ext_doc.paragraphs)
-                    if total_ext_paras > 0 and len(covered_indices) >= total_ext_paras * 0.95:
+                    # 步骤 2：用概览中实际可识别的段落和表格判断覆盖率。
+                    # 不再用包含空段落的原始长度，也不再让重复索引虚增覆盖率。
+                    visible_para_indices = {p.get('index') for p in ext_overview.get('paragraphs', [])}
+                    visible_table_indices = {t.get('index') for t in ext_overview.get('tables', [])}
+                    covered_para_set = set(covered_indices) & visible_para_indices
+                    covered_table_set = set(covered_table_indices) & visible_table_indices
+                    total_ext_items = len(visible_para_indices) + len(visible_table_indices)
+                    covered_item_count = len(covered_para_set) + len(covered_table_set)
+                    if total_ext_items > 0 and covered_item_count >= total_ext_items * 0.95:
                         yield await send({"type": "progress", "step": f"无差异 {template_filename}", "message": f"用户手册已涵盖全质模板 95% 以上内容，无需生成补缺参考文件", "progress": end_progress})
-                        logger.info(f"[SCskill] {template_filename}: 已覆盖 {len(covered_indices)}/{total_ext_paras} 段，跳过参考文件")
+                        logger.info(f"[SCskill] {template_filename}: 已覆盖 {covered_item_count}/{total_ext_items} 个内容项，跳过参考文件")
                         continue
 
-                    # 步骤 3：从全质模板 docx 中删除已覆盖的段落（保留差异部分 + 保留原始格式）
-                    yield await send({"type": "progress", "step": f"生成差异文档 {template_filename}", "message": f"正在从全质模板中移除已覆盖章节（{len(covered_indices)} 段），保留差异部分...", "progress": int(base_progress + 40)})
-                    deleted_count = await asyncio.to_thread(gm.delete_paragraphs_by_indices, ext_doc, covered_indices)
-                    gm.remove_even_page_headers_footers(ext_doc)
-                    logger.info(f"[SCskill] {template_filename}: 删除 {deleted_count} 段已覆盖内容，保留差异部分")
+                    # 步骤 3：从全质模板中同时删除已覆盖段落和表格。
+                    yield await send({"type": "progress", "step": f"生成差异文档 {template_filename}", "message": f"正在移除已覆盖内容（{len(covered_para_set)} 段、{len(covered_table_set)} 个表格），保留差异部分...", "progress": int(base_progress + 40)})
+                    deleted_count = await asyncio.to_thread(gm.delete_paragraphs_by_indices, ext_doc, covered_para_set)
+                    deleted_tables = await asyncio.to_thread(gm.delete_tables_by_indices, ext_doc, covered_table_set)
+                    logger.info(f"[SCskill] {template_filename}: 删除 {deleted_count} 段、{deleted_tables} 个表格已覆盖内容，保留差异部分")
 
                     # 步骤 4：对差异文档调 AI 修改调研信息（公司名、人名、日期等，跟主文件一样的处理）
                     yield await send({"type": "progress", "step": f"AI修改差异文档 {template_filename}", "message": f"正在调用 AI 把调研信息修改进补缺参考文件...", "progress": int(base_progress + 45)})
@@ -4154,6 +4285,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     diff_llm = create_llm(deep_think=True, model_override=current_model)
                     diff_messages = [SystemMessage(content=diff_system_prompt), HumanMessage(content=diff_user_prompt)]
                     diff_stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0, 'header_replace': 0, 'unknown': 0, 'failed': 0}
+                    diff_deferred_replacements = []
                     diff_modifications_count = 0
                     diff_buffer = ''
                     _heartbeat_count = 0
@@ -4207,17 +4339,23 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                                         else: diff_stats['failed'] += 1
                                         yield await send({"type": "modification", "mod_type": "table_cell", "location": f"补缺T{dti}.R{dri}.C{dci}", "reason": dreason, "preview": (dnew_text[:60] + '...' if len(dnew_text) > 60 else dnew_text), "progress": dprogress, "index": diff_modifications_count})
                                     elif dmod_type == 'global_replace':
-                                        dold = dmod.get('old', ''); dnew = dmod.get('new', ''); dn = gm.apply_global_replace(ext_doc, dold, dnew)
-                                        diff_stats['global_replace'] += dn
-                                        yield await send({"type": "modification", "mod_type": "global_replace", "location": "补缺全文", "reason": dreason, "preview": f"'{dold}' → '{dnew}'（{dn} 处）", "progress": dprogress, "index": diff_modifications_count})
+                                        dold = dmod.get('old', ''); dnew = dmod.get('new', '')
+                                        diff_deferred_replacements.append({'type': 'global_replace', 'old': dold, 'new': dnew})
+                                        yield await send({"type": "modification", "mod_type": "global_replace", "location": "补缺全文", "reason": dreason, "preview": f"'{dold}' → '{dnew}'（待统一应用）", "progress": dprogress, "index": diff_modifications_count})
                                     elif dmod_type == 'header_replace':
-                                        dold = dmod.get('old', ''); dnew = dmod.get('new', ''); dn = gm.apply_header_replace(ext_doc, dold, dnew)
-                                        diff_stats['header_replace'] += dn
-                                        yield await send({"type": "modification", "mod_type": "header_replace", "location": "补缺页眉/页脚", "reason": dreason, "preview": f"'{dold}' → '{dnew}'（{dn} 处）", "progress": dprogress, "index": diff_modifications_count})
+                                        dold = dmod.get('old', ''); dnew = dmod.get('new', '')
+                                        diff_deferred_replacements.append({'type': 'header_replace', 'old': dold, 'new': dnew})
+                                        yield await send({"type": "modification", "mod_type": "header_replace", "location": "补缺页眉/页脚", "reason": dreason, "preview": f"'{dold}' → '{dnew}'（待统一应用）", "progress": dprogress, "index": diff_modifications_count})
                                     else: diff_stats['unknown'] += 1
                                 except: diff_stats['failed'] += 1
                     except Exception as diff_stream_err:
                         logger.warning(f"[SCskill] {template_filename} 补缺文档 AI 修改异常: {diff_stream_err}")
+
+                    if diff_deferred_replacements:
+                        yield await send({"type": "progress", "step": f"应用补缺替换 {template_filename}", "message": f"正在按安全顺序应用 {len(diff_deferred_replacements)} 条全文/页眉页脚替换...", "progress": min(end_progress - 1, base_progress + 60)})
+                        _apply_deferred_replacements(ext_doc, diff_deferred_replacements, gm.apply_modifications, diff_stats)
+
+                    diff_applied_modifications_count = _applied_modification_count(diff_stats)
 
                     # 步骤 5：保存补缺参考文件（保留全质模板原始格式：页眉页脚、表格、样式）
                     tmpl_base = os.path.splitext(template_filename)[0]
@@ -4226,13 +4364,13 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                     tmpl_clean = _re.sub(r'-A\d+$', '', tmpl_clean)
                     tmpl_clean = tmpl_clean.strip() or '质量管理手册'
                     safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
-                    ref_filename = f"补缺参考_{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                    ref_filename = f"补缺参考_{safe_tmpl_name}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}.docx"
                     ref_output_path = os.path.join(export_dir, ref_filename)
                     await asyncio.to_thread(ext_doc.save, ref_output_path)
-                    logger.info(f"[SCskill] 补缺参考文件已生成: {ref_output_path}（删除 {deleted_count} 段已覆盖，AI 修改 {diff_modifications_count} 处）")
+                    logger.info(f"[SCskill] 补缺参考文件已生成: {ref_output_path}（删除 {deleted_count} 段、{deleted_tables} 个表格已覆盖，AI 实际修改 {diff_applied_modifications_count} 处；模型指令 {diff_modifications_count} 条）")
                     ref_download_url = f"/api/v1/documents/export-download/{ref_filename}?sid={session_id_for_export}"
-                    reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_modifications_count, "template_source": source_label, "template_filename": template_filename})
-                    yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_modifications_count, "template_source": source_label + "（补缺参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
+                    reference_files.append({"filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_applied_modifications_count, "requested_modifications_count": diff_modifications_count, "template_source": source_label, "template_filename": template_filename})
+                    yield await send({"type": "file_complete", "filename": ref_filename, "download_url": ref_download_url, "display_name": tmpl_clean + "（补缺参考）", "modifications_count": diff_applied_modifications_count, "requested_modifications_count": diff_modifications_count, "template_source": source_label + "（补缺参考）", "template_filename": template_filename, "progress": end_progress, "is_reference": True})
 
                 except Exception as e:
                     logger.exception(f"[SCskill] {template_filename} 生成异常: {e}")
@@ -4571,6 +4709,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             company_name = (survey_data.get('sv_company_name') or '企业').strip()
             safe_name = _re.sub(r'[\\/:*?"<>|]', '_', company_name)
             today_str = datetime.now().strftime("%Y%m%d")
+            generation_id = uuid.uuid4().hex[:10]
 
             generated_files = []
             failed_files = []
@@ -4594,14 +4733,26 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     # .doc 转 .docx
                     actual_template = tmpl['path']
                     if tmpl['need_convert']:
-                        converted = await asyncio.to_thread(cx.convert_doc_to_docx, tmpl['path'])
+                        converted = None
+                        async for _conversion_type, _conversion_data in convert_with_heartbeat(
+                            cx.convert_doc_to_docx, tmpl['path'], send,
+                            f"转换 {dept}/{filename_tmpl}", base_progress,
+                        ):
+                            if _conversion_type == 'sse_str':
+                                yield _conversion_data
+                            else:
+                                converted = _conversion_data
                         if not converted:
-                            yield await send({
-                                "type": "progress", "step": f"跳过 {dept}",
-                                "message": f"⚠️ {dept}/{filename_tmpl} .doc转换失败，跳过",
-                                "progress": end_progress
-                            })
-                            failed_files.append({"dept": dept, "filename": filename_tmpl, "reason": "doc转换失败"})
+                            raw_stem = _re.sub(r'[\\/:*?"<>|]', '_', os.path.splitext(filename_tmpl)[0]).strip() or '程序文件'
+                            raw_ext = os.path.splitext(filename_tmpl)[1].lower() or '.doc'
+                            safe_dept_for_raw = _re.sub(r'[\\/:*?"<>|]', '_', dept)
+                            raw_filename = f"{safe_dept_for_raw}_{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}{raw_ext}"
+                            raw_output_path = os.path.join(export_dir, raw_filename)
+                            await asyncio.to_thread(shutil.copy2, str(tmpl['path']), raw_output_path)
+                            raw_download_url = f"/api/v1/documents/export-download/{raw_filename}?sid={session_id_for_export}"
+                            generated_files.append({"filename": raw_filename, "download_url": raw_download_url, "dept": dept, "display_name": raw_stem, "modifications_count": 0, "stats": {"fallback": "original_doc"}, "template_source_text": f"基于【{source_label}】原始 .doc 返回"})
+                            yield await send({"type": "file_complete", "dept": dept, "display_name": raw_stem, "filename": raw_filename, "download_url": raw_download_url, "modifications_count": 0, "template_source": source_label, "template_filename": filename_tmpl, "progress": end_progress, "is_original": True})
+                            yield await send({"type": "progress", "step": f"保留原文件 {dept}", "message": f"⚠️ {dept}/{filename_tmpl} .doc 转换失败，已原样返回", "progress": end_progress})
                             continue
                         actual_template = converted
 
@@ -4622,6 +4773,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
 
                     stats = {'paragraph': 0, 'table_cell': 0, 'global_replace': 0,
                              'header_replace': 0, 'unknown': 0, 'failed': 0}
+                    deferred_replacements = []
                     modifications_count = 0
                     _heartbeat_count = 0
                     buffer = ''
@@ -4679,19 +4831,17 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                                             stats['failed'] += 1
                                     elif mod_type == 'global_replace':
                                         old = mod.get('old', ''); new = mod.get('new', '')
-                                        n = cx.apply_global_replace(doc, old, new)
-                                        stats['global_replace'] += n
+                                        deferred_replacements.append({'type': 'global_replace', 'old': old, 'new': new})
                                         yield await send({"type": "modification", "mod_type": "global_replace",
                                             "dept": dept, "location": f"[{dept}] 全文",
-                                            "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）",
+                                            "reason": reason, "preview": f"'{old}' → '{new}'（待统一应用）",
                                             "progress": min(progress, end_progress - 2), "index": modifications_count})
                                     elif mod_type == 'header_replace':
                                         old = mod.get('old', ''); new = mod.get('new', '')
-                                        n = cx.apply_header_replace(doc, old, new)
-                                        stats['header_replace'] += n
+                                        deferred_replacements.append({'type': 'header_replace', 'old': old, 'new': new})
                                         yield await send({"type": "modification", "mod_type": "header_replace",
                                             "dept": dept, "location": f"[{dept}] 页眉/页脚",
-                                            "reason": reason, "preview": f"'{old}' → '{new}'（{n} 处）",
+                                            "reason": reason, "preview": f"'{old}' → '{new}'（待统一应用）",
                                             "progress": min(progress, end_progress - 2), "index": modifications_count})
                                     else:
                                         stats['unknown'] += 1
@@ -4706,10 +4856,15 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                             continue
                         logger.warning(f"[CXskill] {dept} LLM异常: {stream_err}")
 
-                    if modifications_count == 0:
+                    if deferred_replacements:
+                        yield await send({"type": "progress", "step": f"应用替换 {dept}", "message": f"正在按安全顺序应用 {len(deferred_replacements)} 条全文/页眉页脚替换...", "progress": min(end_progress - 1, base_progress + 25)})
+                        _apply_deferred_replacements(doc, deferred_replacements, cx.apply_modifications, stats)
+
+                    applied_modifications_count = _applied_modification_count(stats)
+                    if applied_modifications_count == 0:
                         # [Bug 修复] AI 没生成修改方案时，不跳过，原样保存文件返回给用户
                         yield await send({"type": "progress", "step": f"处理 {dept}",
-                            "message": f"{dept} AI未生成修改方案，原样保存", "progress": end_progress})
+                            "message": f"{dept} 未产生可应用的修改，原样保存（模型指令 {modifications_count} 条）", "progress": end_progress})
 
                     # 保存文件 — 文件名用程序名称，去掉编号前缀
                     safe_dept = _re.sub(r'[\\/:*?"<>|]', '_', dept)
@@ -4731,10 +4886,9 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     if not tmpl_clean:
                         tmpl_clean = '程序文件'
                     safe_tmpl_name = _re.sub(r'[\\/:*?"<>|]', '_', tmpl_clean)
-                    out_filename = f"{safe_tmpl_name}_{safe_name}_{today_str}.docx"
+                    out_filename = f"{safe_dept}_{safe_tmpl_name}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}.docx"
                     output_path = os.path.join(export_dir, out_filename)
-                    # 删除 LibreOffice 转换时自动添加的偶数页页眉页脚（避免空白页）
-                    cx.remove_even_page_headers_footers(doc)
+                    # Keep the template's intentional odd/even page layout.
                     await asyncio.to_thread(doc.save, output_path)
                     # 清理 doc 转换产生的临时目录
                     if tmpl.get('need_convert') and converted:
@@ -4746,14 +4900,15 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     logger.info(f"[CXskill] 程序文件已生成: {output_path}")
 
                     download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
-                    template_source_text = f"基于【{source_label}】模板生成\n部门：{dept}\n模板：{filename_tmpl}\n修改：{modifications_count} 处"
+                    template_source_text = f"基于【{source_label}】模板生成\n部门：{dept}\n模板：{filename_tmpl}\n实际修改：{applied_modifications_count} 处（模型指令 {modifications_count} 条）"
 
                     generated_files.append({
                         "filename": out_filename,
                         "download_url": download_url,
                         "dept": dept,
                         "display_name": tmpl_clean,  # 程序文件名称（如"质量方针与组织功能以及权责管理程序"）
-                        "modifications_count": modifications_count,
+                        "modifications_count": applied_modifications_count,
+                        "requested_modifications_count": modifications_count,
                         "stats": stats,
                         "template_source_text": template_source_text
                     })
@@ -4764,7 +4919,8 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                         "display_name": tmpl_clean,
                         "filename": out_filename,
                         "download_url": download_url,
-                        "modifications_count": modifications_count,
+                        "modifications_count": applied_modifications_count,
+                        "requested_modifications_count": modifications_count,
                         "template_source": source_label,
                         "template_filename": filename_tmpl,
                         "progress": end_progress
