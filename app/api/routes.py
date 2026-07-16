@@ -3914,8 +3914,9 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                         logger.warning(f"[SCskill] {template_filename} LLM异常: {stream_err}")
 
                     if modifications_count == 0:
-                        failed_files.append({"filename": template_filename, "reason": "AI未生成修改方案"})
-                        continue
+                        # [Bug 修复] AI 没生成修改方案时，不跳过，原样保存文件返回给用户
+                        # 用户上传的文件即使不需要修改，也应该返回给用户（保持文件集完整）
+                        logger.info(f"[SCskill] {template_filename}: AI未生成修改方案，原样保存")
 
                     tmpl_base = os.path.splitext(template_filename)[0]
                     tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
@@ -4044,8 +4045,8 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                             logger.warning(f"[SCskill] {template_filename} LLM异常: {stream_err}")
 
                         if modifications_count == 0:
-                            failed_files.append({"filename": template_filename, "reason": "AI未生成修改方案"})
-                            continue
+                            # [Bug 修复] AI 没生成修改方案时，不跳过，原样保存文件返回给用户
+                            logger.info(f"[SCskill] {template_filename}: AI未生成修改方案，原样保存")
 
                         tmpl_base = os.path.splitext(template_filename)[0]
                         tmpl_clean = _re.sub(r'^\d*-?[A-Z]+-\w+-\w+-?\d*\s*', '', tmpl_base)
@@ -4706,10 +4707,9 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                         logger.warning(f"[CXskill] {dept} LLM异常: {stream_err}")
 
                     if modifications_count == 0:
-                        yield await send({"type": "progress", "step": f"跳过 {dept}",
-                            "message": f"⚠️ {dept} AI未生成修改方案，跳过", "progress": end_progress})
-                        failed_files.append({"dept": dept, "filename": filename_tmpl, "reason": "AI无方案"})
-                        continue
+                        # [Bug 修复] AI 没生成修改方案时，不跳过，原样保存文件返回给用户
+                        yield await send({"type": "progress", "step": f"处理 {dept}",
+                            "message": f"{dept} AI未生成修改方案，原样保存", "progress": end_progress})
 
                     # 保存文件 — 文件名用程序名称，去掉编号前缀
                     safe_dept = _re.sub(r'[\\/:*?"<>|]', '_', dept)
