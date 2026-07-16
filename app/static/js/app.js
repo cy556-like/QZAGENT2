@@ -2479,11 +2479,11 @@ function addMessageToUI(role, content, imageBase64) {
                 <div style="padding:8px 4px; font-size:14px; line-height:2; color:#333;">
                     <div style="font-size:15px; font-weight:700; color:#15589B; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #e0e0e0;">本版本为试用，如需使用：</div>
                     <div style="margin-bottom:4px;">请汇款至：</div>
-                    <table style="width:100%; border-collapse:collapse; margin:4px 0 14px 0;">
-                        <tr><td style="padding:5px 0; color:#666; width:100px;">账户名称：</td><td style="padding:5px 0; font-weight:600;">北京全质科技股份有限公司</td></tr>
-                        <tr><td style="padding:5px 0; color:#666;">账户号码：</td><td style="padding:5px 0; font-weight:600; font-family:monospace; letter-spacing:0.5px;">11050163810000000267</td></tr>
-                        <tr><td style="padding:5px 0; color:#666;">开户银行：</td><td style="padding:5px 0; font-weight:600;">中国建设银行股份有限公司北京北洼路支行</td></tr>
-                        <tr><td style="padding:5px 0; color:#666;" colspan="2">（提供6%的增值税专用发票）</td></tr>
+                    <table style="width:100%; border-collapse:collapse; margin:6px 0 14px 0; border:1px solid #e0e0e0; background:#fafafa; border-radius:6px;">
+                        <tr><td style="padding:8px 12px; color:#666; width:100px; border-bottom:1px solid #eee;">账户名称：</td><td style="padding:8px 12px; font-weight:600; border-bottom:1px solid #eee;">北京全质科技股份有限公司</td></tr>
+                        <tr><td style="padding:8px 12px; color:#666; border-bottom:1px solid #eee;">账户号码：</td><td style="padding:8px 12px; font-weight:600; font-family:monospace; letter-spacing:0.5px; border-bottom:1px solid #eee;">11050163810000000267</td></tr>
+                        <tr><td style="padding:8px 12px; color:#666;">开户银行：</td><td style="padding:8px 12px; font-weight:600;">中国建设银行股份有限公司北京北洼路支行</td></tr>
+                        <tr><td style="padding:8px 12px; color:#888; font-size:13px;" colspan="2">（提供6%的增值税专用发票）</td></tr>
                     </table>
                     <div style="padding-top:4px;">或联系售前服务电话（微信同号）：<strong style="font-size:15px;">18601256219</strong></div>
                 </div>
@@ -4746,11 +4746,11 @@ function generateDocument(type) {
                 <div style="padding:8px 4px; font-size:14px; line-height:2; color:#333;">
                     <div style="font-size:15px; font-weight:700; color:#15589B; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #e0e0e0;">本版本为试用，如需使用：</div>
                     <div style="margin-bottom:4px;">请汇款至：</div>
-                    <table style="width:100%; border-collapse:collapse; margin:4px 0 14px 0;">
-                        <tr><td style="padding:5px 0; color:#666; width:100px;">账户名称：</td><td style="padding:5px 0; font-weight:600;">北京全质科技股份有限公司</td></tr>
-                        <tr><td style="padding:5px 0; color:#666;">账户号码：</td><td style="padding:5px 0; font-weight:600; font-family:monospace; letter-spacing:0.5px;">11050163810000000267</td></tr>
-                        <tr><td style="padding:5px 0; color:#666;">开户银行：</td><td style="padding:5px 0; font-weight:600;">中国建设银行股份有限公司北京北洼路支行</td></tr>
-                        <tr><td style="padding:5px 0; color:#666;" colspan="2">（提供6%的增值税专用发票）</td></tr>
+                    <table style="width:100%; border-collapse:collapse; margin:6px 0 14px 0; border:1px solid #e0e0e0; background:#fafafa; border-radius:6px;">
+                        <tr><td style="padding:8px 12px; color:#666; width:100px; border-bottom:1px solid #eee;">账户名称：</td><td style="padding:8px 12px; font-weight:600; border-bottom:1px solid #eee;">北京全质科技股份有限公司</td></tr>
+                        <tr><td style="padding:8px 12px; color:#666; border-bottom:1px solid #eee;">账户号码：</td><td style="padding:8px 12px; font-weight:600; font-family:monospace; letter-spacing:0.5px; border-bottom:1px solid #eee;">11050163810000000267</td></tr>
+                        <tr><td style="padding:8px 12px; color:#666;">开户银行：</td><td style="padding:8px 12px; font-weight:600;">中国建设银行股份有限公司北京北洼路支行</td></tr>
+                        <tr><td style="padding:8px 12px; color:#888; font-size:13px;" colspan="2">（提供6%的增值税专用发票）</td></tr>
                     </table>
                     <div style="padding-top:4px;">或联系售前服务电话（微信同号）：<strong style="font-size:15px;">18601256219</strong></div>
                 </div>
