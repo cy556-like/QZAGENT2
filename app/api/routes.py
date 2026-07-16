@@ -1627,58 +1627,6 @@ async def astream_with_heartbeat(llm, messages, send_func, step_label, base_prog
                 pass
 
 
-async def convert_with_heartbeat(convert_func, doc_path, send_func, step_label, base_progress, interval=5.0):
-    """带心跳的 doc→docx 转换（避免 LibreOffice 超时导致 SSE 断开）。
-
-    convert_doc_to_docx 是同步阻塞的，可能需要 30-300 秒。
-    期间不发心跳会让 nginx/浏览器超时断开 SSE 连接。
-
-    本函数用独立 task 运行转换，同时发心跳保持 SSE 活跃。
-
-    Returns:
-        转换后的 .docx 路径，失败返回 None
-    """
-    _convert_done = False
-    _result = [None]
-    _heartbeat_count = 0
-
-    async def _do_convert():
-        nonlocal _convert_done
-        try:
-            _result[0] = await asyncio.to_thread(convert_func, doc_path)
-        except Exception as e:
-            logger.warning(f"[转换异常] {doc_path}: {e}")
-            _result[0] = None
-        finally:
-            _convert_done = True
-
-    _convert_task = asyncio.ensure_future(_do_convert())
-
-    while not _convert_done:
-        try:
-            await asyncio.wait_for(asyncio.shield(_convert_task), timeout=interval)
-        except asyncio.TimeoutError:
-            _heartbeat_count += 1
-            _hb_msgs = ['正在转换文档格式...', '正在用 LibreOffice 转换...', '正在处理 .doc 文件...', '转换中，请稍候...']
-            _hb_msg = _hb_msgs[_heartbeat_count % len(_hb_msgs)]
-            _hb_progress = int(base_progress + min(_heartbeat_count, 10))
-            try:
-                yield await send_func({"type": "progress", "step": step_label, "message": _hb_msg + "（已等待 " + str(_heartbeat_count * int(interval)) + "s）", "progress": _hb_progress})
-            except Exception:
-                pass
-        except asyncio.CancelledError:
-            break
-
-    if not _convert_task.done():
-        _convert_task.cancel()
-        try:
-            await _convert_task
-        except (asyncio.CancelledError, Exception):
-            pass
-
-    return _result[0]
-
-
 @router.get("/kb/categories", summary="列出所有一级分类")
 async def list_categories_api(
     agent_id: str = Query(..., description="智能体ID"),
@@ -3880,7 +3828,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 try:
                     actual_template = template_path
                     if need_convert:
-                        converted = yield from convert_with_heartbeat(gm.convert_doc_to_docx, template_path, send, f"转换 {template_filename}", base_progress)
+                        converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
                         if not converted:
                             failed_files.append({"filename": template_filename, "reason": "doc转换失败"})
                             continue
@@ -4014,7 +3962,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 try:
                     actual_template = template_path
                     if need_convert:
-                        converted = yield from convert_with_heartbeat(gm.convert_doc_to_docx, template_path, send, f"转换 {template_filename}", base_progress)
+                        converted = await asyncio.to_thread(gm.convert_doc_to_docx, template_path)
                         if not converted:
                             failed_files.append({"filename": template_filename, "reason": "doc转换失败"})
                             continue
@@ -4646,7 +4594,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                     # .doc 转 .docx
                     actual_template = tmpl['path']
                     if tmpl['need_convert']:
-                        converted = yield from convert_with_heartbeat(cx.convert_doc_to_docx, tmpl['path'], send, f"转换 {filename_tmpl}", base_progress)
+                        converted = await asyncio.to_thread(cx.convert_doc_to_docx, tmpl['path'])
                         if not converted:
                             yield await send({
                                 "type": "progress", "step": f"跳过 {dept}",
