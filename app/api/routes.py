@@ -1680,6 +1680,126 @@ def _applied_modification_count(stats):
     ))
 
 
+def _xlsx_applied_modification_count(stats):
+    """Return the number of workbook cells whose values actually changed."""
+    return sum(int(stats.get(key, 0) or 0) for key in (
+        'xlsx_cell', 'xlsx_global_replace',
+    ))
+
+
+async def modify_xlsx_with_heartbeat(
+    module, xlsx_path, survey_text, survey_data, template_filename,
+    send_func, step_label, base_progress, current_model,
+):
+    """Analyze and modify every non-formula XLSX cell while keeping SSE alive.
+
+    This is an async generator: the final workbook is emitted as a ``result``
+    item rather than returned, so it remains valid Python and can forward every
+    heartbeat to the client.
+    """
+    try:
+        workbook = await asyncio.to_thread(module.load_xlsx_workbook, xlsx_path)
+        chunks = await asyncio.to_thread(module.build_xlsx_overview_chunks, workbook)
+        modifications = []
+        seen = set()
+        total_chunks = max(len(chunks), 1)
+
+        if not chunks:
+            yield ('result', {
+                'workbook': workbook,
+                'stats': {
+                    'xlsx_cell': 0, 'xlsx_global_replace': 0,
+                    'unknown': 0, 'failed': 0,
+                },
+                'requested_modifications_count': 0,
+                'overview_text': '',
+            })
+            return
+
+        for chunk_index, overview_text in enumerate(chunks, start=1):
+            system_prompt, user_prompt = module.build_xlsx_llm_prompt(
+                overview_text, survey_text, template_filename, survey_data,
+            )
+            llm = create_llm(deep_think=True, model_override=current_model)
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+            buffer = ''
+            chunk_progress = int(
+                base_progress + ((chunk_index - 1) / total_chunks) * 18
+            )
+            async for item_type, item_data in astream_with_heartbeat(
+                llm, messages, send_func,
+                f"{step_label}（第 {chunk_index}/{total_chunks} 批）",
+                chunk_progress,
+                max_progress=min(chunk_progress + 8, base_progress + 22),
+            ):
+                if item_type == 'sse_str':
+                    yield ('sse_str', item_data)
+                    continue
+                if item_type == 'done':
+                    break
+                if item_type == 'error':
+                    raise item_data
+                token = _extract_token(item_data)
+                if not token:
+                    continue
+                buffer += token
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+                    if not line or line == '===END===':
+                        continue
+                    modification = module.parse_ndjson_line(line)
+                    if not isinstance(modification, dict):
+                        continue
+                    mod_type = modification.get('type')
+                    if mod_type == 'xlsx_cell':
+                        sheet = str(modification.get('sheet') or '')
+                        coordinate = str(modification.get('cell') or '').upper()
+                        if not sheet or not coordinate or 'new_value' not in modification:
+                            continue
+                        key = ('cell', sheet, coordinate)
+                        preview = str(modification.get('new_value'))[:60]
+                        location = f"{sheet}!{coordinate}"
+                    elif mod_type == 'xlsx_global_replace':
+                        old = modification.get('old')
+                        if not isinstance(old, str) or not old or 'new' not in modification:
+                            continue
+                        key = ('global', old, str(modification.get('new')))
+                        preview = f"'{old}' → '{modification.get('new')}'"[:60]
+                        location = '整个工作簿'
+                    else:
+                        continue
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    modifications.append(modification)
+                    yield ('sse_str', await send_func({
+                        'type': 'modification',
+                        'mod_type': mod_type,
+                        'location': location,
+                        'reason': str(modification.get('reason') or '')[:60],
+                        'preview': preview,
+                        'progress': min(chunk_progress + 6, base_progress + 22),
+                        'index': len(modifications),
+                    }))
+
+        stats = await asyncio.to_thread(
+            module.apply_xlsx_modifications, workbook, modifications,
+        )
+        yield ('result', {
+            'workbook': workbook,
+            'stats': stats,
+            'requested_modifications_count': len(modifications),
+            'overview_text': '\n'.join(chunks),
+        })
+    except Exception as exc:
+        yield ('error', exc)
+    return
+
+
 def _apply_deferred_replacements(doc, replacements, apply_modifications, stats):
     """Apply streamed global/header replacements in their safe final order.
 
@@ -3855,7 +3975,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
             user_agent_id = _user_agent_id(current_agent_id, username)
             all_templates = gm.find_all_templates(agent_id=user_agent_id, documents_dir=settings.DOCUMENTS_DIR)
             if not all_templates:
-                yield await send({"type": "error", "message": "未找到模板文件。请在企业内部文件知识库[手册]分类或全质知识库[体系文件/手册/全质手册模板]下上传 .docx/.doc 模板。"})
+                yield await send({"type": "error", "message": "未找到模板文件。请在企业内部文件知识库[手册]分类上传 .docx/.doc/.xlsx 文件，或在全质知识库[体系文件/手册/全质手册模板]下上传 .docx/.doc 模板。"})
                 return
 
             total_templates = len(all_templates)
@@ -3891,6 +4011,7 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 ti_counter += 1
                 template_path = tmpl['path']
                 need_convert = tmpl['need_convert']
+                file_type = tmpl.get('file_type') or os.path.splitext(tmpl['filename'])[1].lower().lstrip('.')
                 template_source = tmpl['source']
                 template_filename = tmpl['filename']
                 source_label = {'internal': '企业内部文件', 'external': '全质知识库'}.get(template_source, '未知')
@@ -3900,6 +4021,54 @@ async def generate_manual_api(request: Request, username: str = Depends(require_
                 yield await send({"type": "progress", "step": f"处理第 {ti+1}/{total_templates} 个：{template_filename}", "message": f"正在处理 [{source_label}] {template_filename}", "progress": base_progress})
 
                 try:
+                    if file_type == 'xlsx':
+                        yield await send({"type": "progress", "step": f"AI分析 {template_filename}", "message": "正在逐工作表检查 Excel 数据（公式和样式保持不变）...", "progress": base_progress + 2})
+                        xlsx_result = None
+                        xlsx_error = None
+                        async for xlsx_type, xlsx_data in modify_xlsx_with_heartbeat(
+                            gm, template_path, survey_text, survey_data,
+                            template_filename, send, f"AI分析 {template_filename}",
+                            base_progress + 3, current_model,
+                        ):
+                            if xlsx_type == 'sse_str':
+                                yield xlsx_data
+                            elif xlsx_type == 'result':
+                                xlsx_result = xlsx_data
+                            elif xlsx_type == 'error':
+                                xlsx_error = xlsx_data
+
+                        raw_stem = _re.sub(r'[\\/:*?"<>|]', '_', os.path.splitext(template_filename)[0]).strip() or '质量管理表格'
+                        out_filename = f"{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}.xlsx"
+                        output_path = os.path.join(export_dir, out_filename)
+                        if xlsx_result is None:
+                            logger.warning(f"[SCskill] {template_filename} XLSX AI处理失败，返回原文件: {xlsx_error}")
+                            await asyncio.to_thread(shutil.copy2, str(template_path), output_path)
+                            stats = {"fallback": "original_xlsx", "error": str(xlsx_error)[:200]}
+                            applied_modifications_count = 0
+                            modifications_count = 0
+                            is_original = True
+                        else:
+                            workbook = xlsx_result['workbook']
+                            stats = xlsx_result['stats']
+                            modifications_count = xlsx_result['requested_modifications_count']
+                            applied_modifications_count = _xlsx_applied_modification_count(stats)
+                            user_manual_sections_text += (
+                                f"\n=== 用户手册表格：{template_filename} ===\n"
+                                + xlsx_result.get('overview_text', '') + "\n"
+                            )
+                            try:
+                                await asyncio.to_thread(gm.save_xlsx_workbook, workbook, output_path)
+                            finally:
+                                close_workbook = getattr(workbook, 'close', None)
+                                if close_workbook:
+                                    close_workbook()
+                            is_original = False
+
+                        download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                        generated_files.append({"filename": out_filename, "download_url": download_url, "display_name": raw_stem, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count})
+                        yield await send({"type": "file_complete", "filename": out_filename, "download_url": download_url, "display_name": raw_stem, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": template_filename, "progress": end_progress, "is_reference": False, "is_original": is_original})
+                        continue
+
                     actual_template = template_path
                     if need_convert:
                         converted = None
@@ -4686,7 +4855,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             if not all_templates:
                 yield await send({
                     "type": "error",
-                    "message": "未找到任何程序文件模板。请在企业内部文件知识库[程序文件]分类或全质知识库[体系文件/程序文件]下上传 .docx/.doc 模板。"
+                    "message": "未找到任何程序文件模板。请在企业内部文件知识库[程序文件]分类上传 .docx/.doc/.xlsx 文件，或在全质知识库[体系文件/程序文件]下上传 .docx/.doc 模板。"
                 })
                 return
 
@@ -4718,6 +4887,7 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
             for ti, tmpl in enumerate(all_templates):
                 dept = tmpl['dept']
                 filename_tmpl = tmpl['filename']
+                file_type = tmpl.get('file_type') or os.path.splitext(filename_tmpl)[1].lower().lstrip('.')
                 source = tmpl['source']
                 source_label = {'internal': '企业内部文件知识库', 'external': '全质知识库'}.get(source, '未知')
                 base_progress = int(15 + (ti / total_templates) * 80)  # 15% ~ 95%
@@ -4730,6 +4900,52 @@ async def generate_procedure_api(request: Request, username: str = Depends(requi
                 })
 
                 try:
+                    if file_type == 'xlsx':
+                        yield await send({"type": "progress", "step": f"AI分析 {dept}/{filename_tmpl}", "message": "正在逐工作表检查 Excel 数据（公式和样式保持不变）...", "progress": base_progress + 2})
+                        xlsx_result = None
+                        xlsx_error = None
+                        async for xlsx_type, xlsx_data in modify_xlsx_with_heartbeat(
+                            cx, tmpl['path'], survey_text, survey_data,
+                            filename_tmpl, send, f"AI分析 {dept}/{filename_tmpl}",
+                            base_progress + 3, current_model,
+                        ):
+                            if xlsx_type == 'sse_str':
+                                yield xlsx_data
+                            elif xlsx_type == 'result':
+                                xlsx_result = xlsx_data
+                            elif xlsx_type == 'error':
+                                xlsx_error = xlsx_data
+
+                        safe_dept = _re.sub(r'[\\/:*?"<>|]', '_', dept)
+                        raw_stem = _re.sub(r'[\\/:*?"<>|]', '_', os.path.splitext(filename_tmpl)[0]).strip() or '程序文件表格'
+                        out_filename = f"{safe_dept}_{raw_stem}_{safe_name}_{today_str}_{generation_id}_{ti+1:02d}.xlsx"
+                        output_path = os.path.join(export_dir, out_filename)
+                        if xlsx_result is None:
+                            logger.warning(f"[CXskill] {dept}/{filename_tmpl} XLSX AI处理失败，返回原文件: {xlsx_error}")
+                            await asyncio.to_thread(shutil.copy2, str(tmpl['path']), output_path)
+                            stats = {"fallback": "original_xlsx", "error": str(xlsx_error)[:200]}
+                            applied_modifications_count = 0
+                            modifications_count = 0
+                            is_original = True
+                        else:
+                            workbook = xlsx_result['workbook']
+                            stats = xlsx_result['stats']
+                            modifications_count = xlsx_result['requested_modifications_count']
+                            applied_modifications_count = _xlsx_applied_modification_count(stats)
+                            try:
+                                await asyncio.to_thread(cx.save_xlsx_workbook, workbook, output_path)
+                            finally:
+                                close_workbook = getattr(workbook, 'close', None)
+                                if close_workbook:
+                                    close_workbook()
+                            is_original = False
+
+                        download_url = f"/api/v1/documents/export-download/{out_filename}?sid={session_id_for_export}"
+                        template_source_text = f"基于【{source_label}】Excel 模板生成\n部门：{dept}\n模板：{filename_tmpl}\n实际修改：{applied_modifications_count} 处（模型指令 {modifications_count} 条）"
+                        generated_files.append({"filename": out_filename, "download_url": download_url, "dept": dept, "display_name": raw_stem, "modifications_count": applied_modifications_count, "stats": stats, "requested_modifications_count": modifications_count, "template_source_text": template_source_text})
+                        yield await send({"type": "file_complete", "dept": dept, "display_name": raw_stem, "filename": out_filename, "download_url": download_url, "modifications_count": applied_modifications_count, "requested_modifications_count": modifications_count, "template_source": source_label, "template_filename": filename_tmpl, "progress": end_progress, "is_original": is_original})
+                        continue
+
                     # .doc 转 .docx
                     actual_template = tmpl['path']
                     if tmpl['need_convert']:
