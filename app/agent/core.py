@@ -514,7 +514,7 @@ def create_llm(deep_think: bool = False, fast_mode: bool = False, model_override
     if short_response:
         request_timeout = 45
     elif deep_think:
-        request_timeout = 180
+        request_timeout = 600
     else:
         request_timeout = 120
 

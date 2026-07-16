@@ -1577,18 +1577,31 @@ async def astream_with_heartbeat(llm, messages, send_func, step_label, base_prog
 
     async def _heartbeat_producer():
         nonlocal _heartbeat_count
-        while not _llm_done and not _first_chunk_received:
-            await asyncio.sleep(interval)
-            if _llm_done or _first_chunk_received:
+        while not _llm_done:
+            # 收到第一个 chunk 后降低心跳频率（15s），保持 SSE 连接活跃避免 nginx 超时断开
+            current_interval = interval if not _first_chunk_received else 15.0
+            await asyncio.sleep(current_interval)
+            if _llm_done:
                 break
             _heartbeat_count += 1
-            _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
-            _hb_progress = int(base_progress + min(_heartbeat_count, max_progress - base_progress))
-            try:
-                hb_evt = {"type": "progress", "step": step_label, "message": _hb_msg + "（已等待 " + str(_heartbeat_count * int(interval)) + "s）", "progress": _hb_progress}
-                await _queue.put(('sse_str', await send_func(hb_evt)))
-            except Exception:
-                pass
+            if _first_chunk_received:
+                # 收到 chunk 后发 keep-alive 心跳（不同文案，避免与修改方案输出混淆）
+                _hb_msg = '正在输出修改方案...'
+                _hb_progress = int(base_progress + min(_heartbeat_count, max_progress - base_progress))
+                try:
+                    hb_evt = {"type": "progress", "step": step_label, "message": _hb_msg, "progress": _hb_progress}
+                    await _queue.put(('sse_str', await send_func(hb_evt)))
+                except Exception:
+                    pass
+            else:
+                # thinking 阶段：正常心跳
+                _hb_msg = _heartbeat_msgs[_heartbeat_count % len(_heartbeat_msgs)]
+                _hb_progress = int(base_progress + min(_heartbeat_count, max_progress - base_progress))
+                try:
+                    hb_evt = {"type": "progress", "step": step_label, "message": _hb_msg + "（已等待 " + str(_heartbeat_count * int(interval)) + "s）", "progress": _hb_progress}
+                    await _queue.put(('sse_str', await send_func(hb_evt)))
+                except Exception:
+                    pass
 
     _llm_task = asyncio.ensure_future(_llm_producer())
     _heartbeat_task = asyncio.ensure_future(_heartbeat_producer())
