@@ -1697,6 +1697,12 @@ async def modify_xlsx_with_heartbeat(
     item rather than returned, so it remains valid Python and can forward every
     heartbeat to the client.
     """
+    # This helper is module-level, while both generation endpoints import these
+    # names only in their own local scopes.  Import here so manual and procedure
+    # XLSX flows always have their required LLM dependencies.
+    from app.agent.core import create_llm
+    from langchain_core.messages import HumanMessage, SystemMessage
+
     try:
         workbook = await asyncio.to_thread(module.load_xlsx_workbook, xlsx_path)
         chunks = await asyncio.to_thread(module.build_xlsx_overview_chunks, workbook)
