@@ -4205,10 +4205,135 @@ async function getSurveyDataFresh() {
             return data.survey_data;
         }
     } catch (e) {
+        // 登录失效不能回退到本地缓存继续生成，否则后续请求只会得到含糊的 network error。
+        if (e.message === 'UNAUTHORIZED') throw e;
         console.warn('[getSurveyDataFresh] 服务器加载失败，使用本地数据:', e);
     }
     // 兜底：从 localStorage 读
     return getSurveyData();
+}
+
+const MAX_LIVE_GENERATION_MODIFICATIONS = 100;
+const MAX_GENERATION_DETAIL_RECORDS = 500;
+
+// 统一校验一键生成相关响应，保留 apiFetch 的 401 自动退出行为并给非 2xx 清晰提示。
+async function assertGenerationResponse(response, fallbackMessage) {
+    if (response.ok) {
+        if (!response.body) throw new Error('服务器未返回可读取的数据流');
+        return response;
+    }
+
+    let detail = '';
+    try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            const payload = await response.json();
+            detail = payload.detail || payload.message || '';
+        } else {
+            detail = (await response.text()).trim();
+        }
+    } catch (e) {
+        console.warn('[一键生成] 读取错误响应失败:', e);
+    }
+    throw new Error(`${fallbackMessage}（HTTP ${response.status}）${detail ? '：' + detail : ''}`);
+}
+
+// 增量解析 SSE：兼容 CRLF、分块边界以及连接结束时没有双换行的最后一条事件。
+function consumeGenerationSse(state, chunk = '', flush = false) {
+    state.buffer += chunk;
+    state.buffer = state.buffer.replace(/\r\n/g, '\n');
+    if (flush && state.buffer.trim()) state.buffer += '\n\n';
+
+    const rawEvents = state.buffer.split('\n\n');
+    state.buffer = rawEvents.pop() || '';
+    const parsed = [];
+    rawEvents.forEach(evt => {
+        const dataLines = evt.split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.substring(5).trimStart());
+        if (!dataLines.length) return;
+        const dataStr = dataLines.join('\n').trim();
+        if (!dataStr) return;
+        try {
+            parsed.push(JSON.parse(dataStr));
+        } catch (e) {
+            console.warn('[SSE] 解析失败:', dataStr);
+        }
+    });
+    return parsed;
+}
+
+function createGenerationModificationState() {
+    return { total: 0, live: 0, omittedDetails: 0 };
+}
+
+// 大型 Excel 可能产生数千条修改；限制 DOM 和内存记录，完整修改仍保存在生成后的文件中。
+function appendGenerationModification(modsEl, modificationLog, state, data) {
+    state.total++;
+    const record = {
+        location: data.location || '',
+        preview: data.preview || '',
+        reason: data.reason || '',
+        mod_type: data.mod_type || 'other'
+    };
+    if (modificationLog.length < MAX_GENERATION_DETAIL_RECORDS) {
+        modificationLog.push(record);
+    } else {
+        state.omittedDetails++;
+    }
+
+    let list = modsEl.querySelector('.gen-mods-list');
+    if (!list) {
+        modsEl.innerHTML = '<div class="gen-mods-header">正在应用的修改：</div><div class="gen-mods-list"></div>';
+        list = modsEl.querySelector('.gen-mods-list');
+    }
+
+    if (state.live < MAX_LIVE_GENERATION_MODIFICATIONS) {
+        const modItem = document.createElement('div');
+        modItem.className = 'gen-mod-item gen-mod-' + record.mod_type;
+        const badge = document.createElement('span');
+        badge.className = 'gen-mod-badge';
+        badge.textContent = record.location;
+        const preview = document.createElement('span');
+        preview.className = 'gen-mod-preview';
+        preview.textContent = record.preview;
+        modItem.appendChild(badge);
+        modItem.appendChild(preview);
+        if (record.reason) {
+            const reason = document.createElement('span');
+            reason.className = 'gen-mod-reason';
+            reason.textContent = record.reason;
+            modItem.appendChild(reason);
+        }
+        list.appendChild(modItem);
+        state.live++;
+    } else {
+        let overflow = modsEl.querySelector('.gen-mod-overflow');
+        if (!overflow) {
+            overflow = document.createElement('div');
+            overflow.className = 'gen-mod-overflow';
+            overflow.style.cssText = 'padding:8px;color:var(--text-secondary);font-size:12px;';
+            modsEl.appendChild(overflow);
+        }
+        overflow.textContent = `修改较多：已实时展示前 ${MAX_LIVE_GENERATION_MODIFICATIONS} 条，当前共 ${state.total} 条`;
+    }
+
+    // 不再为每个单元格安排一次滚动任务，批量修改时每 20 条更新一次即可。
+    if (state.total <= MAX_LIVE_GENERATION_MODIFICATIONS || state.total % 20 === 0) {
+        smartScrollToBottom();
+    }
+}
+
+function aggregateGenerationStats(files, fallbackStats = {}) {
+    const filesWithStats = (files || []).filter(file => file && file.stats);
+    if (!filesWithStats.length) return fallbackStats || {};
+    return filesWithStats.reduce((total, file) => {
+        Object.entries(file.stats || {}).forEach(([key, value]) => {
+            const numericValue = Number(value);
+            if (Number.isFinite(numericValue)) total[key] = (total[key] || 0) + numericValue;
+        });
+        return total;
+    }, {});
 }
 
 function formatSurveyDataForAI() {
@@ -4257,41 +4382,35 @@ function generateDocument(type) {
     
     // 一键生成手册：调用 SCskill API（SSE 流式接收进度）
     if (type === 'manual') {
-        // [保留] 同步快速检查本地数据，避免没数据时 UI 闪烁（先切聊天页又切回调研页）
-        const localData = getSurveyData();
-        if (!localData) {
-            showToast('请先点击"填写体系调研"填写企业信息', 3000);
-            showSurveyForm();
-            return;
-        }
-        const surveyPage = document.getElementById('surveyPage');
-        if (surveyPage && surveyPage.style.display !== 'none') {
-            hideSurveyForm();
-        }
-        document.getElementById('chatContent').classList.remove('centered');
         // [Bug #9 修复] 先检查 isLoading，避免双击产生孤儿空气泡
         (async () => {
             if (isLoading) return;
             isLoading = true;
             // 创建 AbortController 以支持用户中止生成
             currentAbortController = new AbortController();
+            const generationController = currentAbortController;
             document.getElementById('sendBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = '';
-            // [修复] 优先从服务器拉取最新调研数据（跨浏览器同步），失败回退到 localStorage
-            // 此处 surveyData 一定不为 null（localData 已保证），但保留防御性检查
-            const surveyData = await getSurveyDataFresh();
-            if (!surveyData) {
-                isLoading = false;
-                showToast('数据加载失败，请重试', 3000);
-                return;
-            }
-            const bubble = createStreamingBubble();
-            const bubbleContent = bubble.querySelector('.bubble') || bubble;
-            if (!currentChatId) {
-                await createNewChat();
-                if (!currentChatId) { isLoading = false; return; }
-            }
+            let bubbleContent = null;
             try {
+                // 服务器优先，确保在另一台设备保存的调研数据也能直接用于生成。
+                const surveyData = await getSurveyDataFresh();
+                if (!surveyData) {
+                    showToast('请先点击"填写体系调研"填写企业信息', 3000);
+                    showSurveyForm();
+                    return;
+                }
+                const surveyPage = document.getElementById('surveyPage');
+                if (surveyPage && surveyPage.style.display !== 'none') hideSurveyForm();
+                document.getElementById('chatContent').classList.remove('centered');
+
+                if (!currentChatId) {
+                    await createNewChat();
+                    if (!currentChatId) throw new Error('创建对话失败，请重试');
+                }
+                const bubble = createStreamingBubble();
+                bubbleContent = bubble.querySelector('.bubble') || bubble;
+
                 // 渲染初始容器
                 bubbleContent.innerHTML = `
                     <div class="gen-manual-progress">
@@ -4314,52 +4433,33 @@ function generateDocument(type) {
                 const modsEl = bubbleContent.querySelector('.gen-modifications');
 
                 // 调用 SSE 接口
-                const genResp = await fetch('/api/v1/generate/manual', {
+                const genResp = await apiFetch('/api/v1/generate/manual', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken,
                         'Accept': 'text/event-stream'
                     },
-                    signal: currentAbortController.signal,
+                    signal: generationController.signal,
                     body: JSON.stringify({ survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '', model_id: document.getElementById('modelSelect').value })
                 });
-
-                if (!genResp.ok) {
-                    const errText = await genResp.text();
-                    throw new Error('HTTP ' + genResp.status + ': ' + errText);
-                }
+                await assertGenerationResponse(genResp, '质量手册生成请求失败');
 
                 // 用 ReadableStream 读取 SSE
                 const reader = genResp.body.getReader();
                 const decoder = new TextDecoder('utf-8');
-                let buffer = '';
+                const sseState = { buffer: '' };
                 let receivedCount = 0;
                 let totalMods = 0;
-                let modificationLog = []; // 收集所有修改记录，用于最终展示
+                let modificationLog = [];
+                const modificationState = createGenerationModificationState();
+                let terminalReceived = false;
 
                 while (true) {
                     const { value, done } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-
-                    // 按 SSE 协议解析（事件以 \n\n 分隔）
-                    const events = buffer.split('\n\n');
-                    buffer = events.pop(); // 最后一段可能不完整，保留
-
-                    for (const evt of events) {
-                        const lines = evt.split('\n');
-                        let dataStr = '';
-                        for (const line of lines) {
-                            if (line.startsWith('data:')) {
-                                dataStr += line.substring(5).trim();
-                            }
-                        }
-                        if (!dataStr) continue;
-                        let data;
-                        try { data = JSON.parse(dataStr); }
-                        catch (e) { console.warn('[SSE] 解析失败:', dataStr); continue; }
-
+                    const decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+                    const events = consumeGenerationSse(sseState, decoded, done);
+                    for (const data of events) {
                         if (data.type === 'progress') {
                             stepTextEl.textContent = data.step || '处理中';
                             if (typeof data.progress === 'number') {
@@ -4379,37 +4479,24 @@ function generateDocument(type) {
                             }
                         } else if (data.type === 'modification') {
                             receivedCount++;
-                            const list = modsEl.querySelector('.gen-mods-list') || modsEl;
-                            const modItem = document.createElement('div');
-                            modItem.className = 'gen-mod-item gen-mod-' + (data.mod_type || 'other');
-                            const reasonText = data.reason ? ` <span class="gen-mod-reason">${data.reason}</span>` : '';
-                            modItem.innerHTML = `
-                                <span class="gen-mod-badge">${data.location || ''}</span>
-                                <span class="gen-mod-preview">${data.preview || ''}</span>${reasonText}
-                            `;
-                            list.appendChild(modItem);
-                            modificationLog.push({
-                                location: data.location,
-                                preview: data.preview,
-                                reason: data.reason,
-                                mod_type: data.mod_type
-                            });
+                            appendGenerationModification(modsEl, modificationLog, modificationState, data);
                             if (typeof data.progress === 'number') {
                                 progressBarEl.style.width = data.progress + '%';
                             }
-                            scrollToBottom();
                         } else if (data.type === 'success') {
+                            terminalReceived = true;
                             totalMods = data.modifications_count || receivedCount;
                             // stats/failed_files/files 可能在 data 顶层，也可能在 data.files[0] 中
                             const files = data.files || [];
                             const referenceFiles = data.reference_files || [];
-                            const primaryFile = files[0] || {};
-                            const stats = data.stats || primaryFile.stats || {};
+                            const stats = aggregateGenerationStats(files, data.stats || {});
                             const statLines = [];
                             if (stats.paragraph) statLines.push(`段落 ${stats.paragraph} 处`);
                             if (stats.table_cell) statLines.push(`表格 ${stats.table_cell} 处`);
                             if (stats.global_replace) statLines.push(`全文替换 ${stats.global_replace} 处`);
                             if (stats.header_replace) statLines.push(`页眉页脚 ${stats.header_replace} 处`);
+                            if (stats.xlsx_cell) statLines.push(`Excel 单元格 ${stats.xlsx_cell} 处`);
+                            if (stats.xlsx_global_replace) statLines.push(`Excel 全表替换 ${stats.xlsx_global_replace} 处`);
                             const statText = statLines.join('，') || '无修改';
 
                             progressBarEl.style.width = '100%';
@@ -4454,7 +4541,7 @@ function generateDocument(type) {
                                     ${templateSourceHtml}
                                     <p class="gen-success-stats">修改统计：${statText}</p>
                                     <details class="gen-mods-details">
-                                        <summary>查看详细修改记录（共 ${modificationLog.length} 条）</summary>
+                                        <summary>查看详细修改记录（共 ${modificationState.total} 条）</summary>
                                         <div class="gen-mods-detail-list">
                                             ${modificationLog.map(m => `
                                                 <div class="gen-mod-detail-item">
@@ -4463,6 +4550,7 @@ function generateDocument(type) {
                                                     ${m.reason ? `<span class="gen-mod-reason">${m.reason}</span>` : ''}
                                                 </div>
                                             `).join('')}
+                                            ${modificationState.omittedDetails > 0 ? `<div class="gen-mod-overflow">为保证页面流畅，另有 ${modificationState.omittedDetails} 条未在页面展开。</div>` : ''}
                                         </div>
                                     </details>
                                     <br>
@@ -4478,16 +4566,31 @@ function generateDocument(type) {
                             }
                             await loadChatList();
                         } else if (data.type === 'error') {
+                            terminalReceived = true;
                             bubbleContent.innerHTML = `<p style="color:#e63946;">生成失败：${data.message || '未知错误'}</p>`;
                         }
                     }
+                    if (terminalReceived) {
+                        try { await reader.cancel(); } catch (e) {}
+                        break;
+                    }
+                    if (done) break;
+                }
+                if (!terminalReceived) {
+                    throw new Error('生成连接已中断，未收到完成结果，请重试');
                 }
             } catch (e) {
                 if (e.name === 'AbortError') {
-                    bubbleContent.innerHTML = '<p style="color:var(--text-secondary);">已终止生成</p>';
+                    if (bubbleContent) bubbleContent.innerHTML = '<p style="color:var(--text-secondary);">已终止生成</p>';
                 } else {
                     console.error('[生成手册] 失败:', e);
-                    bubbleContent.innerHTML = '<p style="color:#e63946;">生成失败：' + e.message + '</p>';
+                    const errorMessage = e.message === 'UNAUTHORIZED' ? '登录已过期，请重新登录' : e.message;
+                    if (bubbleContent) {
+                        bubbleContent.textContent = '生成失败：' + errorMessage;
+                        bubbleContent.style.color = '#e63946';
+                    } else if (e.message !== 'UNAUTHORIZED') {
+                        showToast('生成失败：' + errorMessage, 3000);
+                    }
                 }
             } finally {
                 resetStreamingUI();
@@ -4498,53 +4601,47 @@ function generateDocument(type) {
 
     // 一键生成程序文件：先查模板→判断是否需要勾选→SSE流式生成
     if (type === 'procedure') {
-        // [保留] 同步快速检查本地数据，避免没数据时 UI 闪烁
-        const localData = getSurveyData();
-        if (!localData) {
-            showToast('请先点击"填写体系调研"填写企业信息', 3000);
-            showSurveyForm();
-            return;
-        }
-        const surveyPage = document.getElementById('surveyPage');
-        if (surveyPage && surveyPage.style.display !== 'none') {
-            hideSurveyForm();
-        }
-        document.getElementById('chatContent').classList.remove('centered');
         // [Bug #9 修复] 先检查 isLoading，避免双击产生孤儿空气泡
         (async () => {
             if (isLoading) return;
             isLoading = true;
             // 创建 AbortController 以支持用户中止生成
             currentAbortController = new AbortController();
+            const generationController = currentAbortController;
             document.getElementById('sendBtn').style.display = 'none';
             document.getElementById('stopBtn').style.display = '';
-            // [修复] 优先从服务器拉取最新调研数据（跨浏览器同步），失败回退到 localStorage
-            const surveyData = await getSurveyDataFresh();
-            if (!surveyData) {
-                isLoading = false;
-                showToast('数据加载失败，请重试', 3000);
-                return;
-            }
-            const bubble = createStreamingBubble();
-            const bubbleContent = bubble.querySelector('.bubble') || bubble;
-            if (!currentChatId) {
-                await createNewChat();
-                if (!currentChatId) { isLoading = false; return; }
-            }
+            let bubbleContent = null;
             try {
+                const surveyData = await getSurveyDataFresh();
+                if (!surveyData) {
+                    showToast('请先点击"填写体系调研"填写企业信息', 3000);
+                    showSurveyForm();
+                    return;
+                }
+                const surveyPage = document.getElementById('surveyPage');
+                if (surveyPage && surveyPage.style.display !== 'none') hideSurveyForm();
+                document.getElementById('chatContent').classList.remove('centered');
+
+                if (!currentChatId) {
+                    await createNewChat();
+                    if (!currentChatId) throw new Error('创建对话失败，请重试');
+                }
+                const bubble = createStreamingBubble();
+                bubbleContent = bubble.querySelector('.bubble') || bubble;
+
                 // 第一步：查询可用模板
                 bubbleContent.innerHTML = '<p>正在查找可用的程序文件模板...</p>';
                 scrollToBottom();
                 const tmplResp = await apiFetch('/api/v1/generate/procedure/templates', {
                     method: 'POST',
                     headers: apiHeaders(),
-                    signal: currentAbortController.signal,
+                    signal: generationController.signal,
                     body: JSON.stringify({ agent_id: currentAgentId || '' })
                 });
+                await assertGenerationResponse(tmplResp, '查询程序文件模板失败');
                 const tmplData = await tmplResp.json();
                 if (!tmplData.success || !tmplData.templates || tmplData.templates.length === 0) {
                     bubbleContent.innerHTML = '<p style="color:#e63946;">未找到任何程序文件模板。请先在全质知识库[体系文件/程序文件]下上传模板，或在填写体系调研时上传程序文件。</p>';
-                    resetStreamingUI();
                     return;
                 }
 
@@ -4579,46 +4676,31 @@ function generateDocument(type) {
                 const requestBody = { survey_data: surveyData, agent_id: currentAgentId || '', session_id: currentChatId || '', model_id: document.getElementById('modelSelect').value };
                 if (selectedTemplates) requestBody.selected_templates = selectedTemplates;
 
-                const genResp = await fetch('/api/v1/generate/procedure', {
+                const genResp = await apiFetch('/api/v1/generate/procedure', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authToken, 'Accept': 'text/event-stream' },
-                    signal: currentAbortController.signal,
+                    signal: generationController.signal,
                     body: JSON.stringify(requestBody)
                 });
-                if (!genResp.ok) { throw new Error('HTTP ' + genResp.status + ': ' + await genResp.text()); }
+                await assertGenerationResponse(genResp, '程序文件生成请求失败');
                 const reader = genResp.body.getReader();
                 const decoder = new TextDecoder('utf-8');
-                let buffer = '';
+                const sseState = { buffer: '' };
                 let modificationLog = [];
+                const modificationState = createGenerationModificationState();
+                let terminalReceived = false;
                 while (true) {
                     const { value, done } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const events = buffer.split('\n\n');
-                    buffer = events.pop();
-                    for (const evt of events) {
-                        const lines = evt.split('\n');
-                        let dataStr = '';
-                        for (const line of lines) { if (line.startsWith('data:')) dataStr += line.substring(5).trim(); }
-                        if (!dataStr) continue;
-                        let data; try { data = JSON.parse(dataStr); } catch (e) { continue; }
+                    const decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
+                    const events = consumeGenerationSse(sseState, decoded, done);
+                    for (const data of events) {
                         if (data.type === 'progress') {
                             stepTextEl.textContent = data.step || '处理中';
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
                             messageEl.textContent = data.message || '';
                         } else if (data.type === 'modification') {
-                            const list = modsEl.querySelector('.gen-mods-list') || (() => {
-                                modsEl.innerHTML = '<div class="gen-mods-header">正在应用的修改：</div><div class="gen-mods-list"></div>';
-                                return modsEl.querySelector('.gen-mods-list');
-                            })();
-                            const modItem = document.createElement('div');
-                            modItem.className = 'gen-mod-item gen-mod-' + (data.mod_type || 'other');
-                            const reasonText = data.reason ? ` <span class="gen-mod-reason">${data.reason}</span>` : '';
-                            modItem.innerHTML = `<span class="gen-mod-badge">${data.location || ''}</span><span class="gen-mod-preview">${data.preview || ''}</span>${reasonText}`;
-                            list.appendChild(modItem);
-                            modificationLog.push({ location: data.location, preview: data.preview, reason: data.reason });
+                            appendGenerationModification(modsEl, modificationLog, modificationState, data);
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
-                            scrollToBottom();
                         } else if (data.type === 'file_complete') {
                             const list = modsEl.querySelector('.gen-mods-list') || modsEl;
                             const doneItem = document.createElement('div');
@@ -4630,6 +4712,7 @@ function generateDocument(type) {
                             if (typeof data.progress === 'number') progressBarEl.style.width = data.progress + '%';
                             scrollToBottom();
                         } else if (data.type === 'success') {
+                            terminalReceived = true;
                             progressBarEl.style.width = '100%';
                             stepTextEl.textContent = '完成';
                             stepTextEl.previousElementSibling.style.display = 'none';
@@ -4679,9 +4762,10 @@ function generateDocument(type) {
                                     ${downloadHtml}
                                     ${failedHtml}
                                     <details class="gen-mods-details">
-                                        <summary>查看详细修改记录（共 ${modificationLog.length} 条）</summary>
+                                        <summary>查看详细修改记录（共 ${modificationState.total} 条）</summary>
                                         <div class="gen-mods-detail-list">
                                             ${modificationLog.map(m => `<div class="gen-mod-detail-item"><span class="gen-mod-badge">${m.location || ''}</span><span class="gen-mod-preview">${(m.preview || '').replace(/</g, '&lt;')}</span>${m.reason ? `<span class="gen-mod-reason">${m.reason}</span>` : ''}</div>`).join('')}
+                                            ${modificationState.omittedDetails > 0 ? `<div class="gen-mod-overflow">为保证页面流畅，另有 ${modificationState.omittedDetails} 条未在页面展开。</div>` : ''}
                                         </div>
                                     </details>
                                 </div>
@@ -4690,16 +4774,31 @@ function generateDocument(type) {
                             if (currentChatId) { await apiFetch('/api/v1/history/' + currentChatId, { method: 'GET', headers: apiHeaders() }); }
                             await loadChatList();
                         } else if (data.type === 'error') {
+                            terminalReceived = true;
                             bubbleContent.innerHTML = `<p style="color:#e63946;">生成失败：${data.message || '未知错误'}</p>`;
                         }
                     }
+                    if (terminalReceived) {
+                        try { await reader.cancel(); } catch (e) {}
+                        break;
+                    }
+                    if (done) break;
+                }
+                if (!terminalReceived) {
+                    throw new Error('生成连接已中断，未收到完成结果，请重试');
                 }
             } catch (e) {
                 if (e.name === 'AbortError') {
-                    bubbleContent.innerHTML = '<p style="color:var(--text-secondary);">已终止生成</p>';
+                    if (bubbleContent) bubbleContent.innerHTML = '<p style="color:var(--text-secondary);">已终止生成</p>';
                 } else {
                     console.error('[生成程序文件] 失败:', e);
-                    bubbleContent.innerHTML = '<p style="color:#e63946;">生成失败：' + e.message + '</p>';
+                    const errorMessage = e.message === 'UNAUTHORIZED' ? '登录已过期，请重新登录' : e.message;
+                    if (bubbleContent) {
+                        bubbleContent.textContent = '生成失败：' + errorMessage;
+                        bubbleContent.style.color = '#e63946';
+                    } else if (e.message !== 'UNAUTHORIZED') {
+                        showToast('生成失败：' + errorMessage, 3000);
+                    }
                 }
             } finally {
                 resetStreamingUI();
